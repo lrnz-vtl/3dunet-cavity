@@ -93,6 +93,7 @@ class SliceBuilder:
             [(slice, slice, slice, slice), ...] if len(shape) == 4
             [(slice, slice, slice), ...] if len(shape) == 3
         """
+        # NOTE LORENZO
         slices = []
         if dataset.ndim == 4:
             in_channels, i_z, i_y, i_x = dataset.shape
@@ -143,6 +144,7 @@ class FilterSliceBuilder(SliceBuilder):
             return
 
         rand_state = np.random.RandomState(47)
+        print("Inside FilterSlice Builder")
 
         def ignore_predicate(raw_label_idx):
             label_idx = raw_label_idx[1]
@@ -157,6 +159,8 @@ class FilterSliceBuilder(SliceBuilder):
         # ignore slices containing too much ignore_index
         filtered_slices = list(filter(ignore_predicate, zipped_slices))
         # unzip and save slices
+        assert(len(filtered_slices) > 0)
+        # NOTE LORENZO This fails if filtered slices is empty
         raw_slices, label_slices = zip(*filtered_slices)
         self._raw_slices = list(raw_slices)
         self._label_slices = list(label_slices)
@@ -298,9 +302,13 @@ def get_train_loaders(config):
 
     logger.info(f'Batch size for train/val loader: {batch_size}')
     # when training with volumetric data use batch_size of 1 due to GPU memory constraints
+
+    ret = DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True,
+                            num_workers=num_workers)
+
+    pass
     return {
-        'train': DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True,
-                            num_workers=num_workers),
+        'train': ret,
         # don't shuffle during validation: useful when showing how predictions for a given batch get better over time
         'val': DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers)
     }

@@ -18,7 +18,8 @@ def compute_per_channel_dice(input, target, epsilon=1e-6, weight=None):
          epsilon (float): prevents division by zero
          weight (torch.Tensor): Cx1 tensor of weight per channel/class
     """
-
+    # NOTE Lorenzo
+    # print(f"Sizes: {input.size()}, {target.size()}")
     # input and target shapes must match
     assert input.size() == target.size(), "'input' and 'target' must have the same shape"
 
@@ -73,6 +74,7 @@ class SkipLastTargetChannelWrapper(nn.Module):
         assert target.size(1) > 1, 'Target tensor has a singleton channel dimension, cannot remove channel'
 
         # skips last target channel if needed
+        # NOTE LORENZO
         target = target[:, :-1, ...]
 
         if self.squeeze_channel:
@@ -110,6 +112,9 @@ class _AbstractDiceLoss(nn.Module):
         # get probabilities from logits
         input = self.normalization(input)
 
+        # NOTE LORENZO
+        # print("Shapes:", input.shape, target.shape)
+
         # compute per channel Dice coefficient
         per_channel_dice = self.dice(input, target, weight=self.weight)
 
@@ -127,6 +132,7 @@ class DiceLoss(_AbstractDiceLoss):
         super().__init__(weight, normalization)
 
     def dice(self, input, target, weight):
+        pass
         return compute_per_channel_dice(input, target, weight=self.weight)
 
 

@@ -5,24 +5,21 @@
 # Download test data from: https://osf.io/tn4xj/
 
 eval_metric:
-  name: BoundaryAdaptedRandError
-  threshold: 0.4
-  use_first_input: true
-  use_last_target: true
+  name: MeanIoU
+  ignore_index: null
 loaders:
   dataset: StandardHDF5Dataset
   label_internal_path: /label
-  num_workers: 8
+  num_workers: 0
   raw_internal_path: /raw
   train:
     file_paths:
-    - "/home/adrian/Datasets/LateralRoot/Train"
-
+    - "C:\\Users\\loren\\deep_apbs\\train_sub"
     slice_builder:
       name: FilterSliceBuilder
-      patch_shape: [80, 144, 144]
+      patch_shape: [64, 64, 64]
       slack_acceptance: 0.01
-      stride_shape: [20, 40, 40]
+      stride_shape: [10, 10, 10]
       threshold: 0.6
     transformer:
       label:
@@ -32,13 +29,7 @@ loaders:
         axes: [[2, 1]]
         mode: reflect
         name: RandomRotate
-      - name: ElasticDeformation
-        spline_order: 0
-      - append_label: true
-        blur: true
-        name: StandardLabelToBoundary
-        sigma: 1.0
-      - expand_dims: false
+      - expand_dims: true
         name: ToTensor
       raw:
       - name: Standardize
@@ -48,26 +39,20 @@ loaders:
         axes: [[2, 1]]
         mode: reflect
         name: RandomRotate
-      - name: ElasticDeformation
-        spline_order: 3
       - expand_dims: true
         name: ToTensor
   val:
     file_paths:
-    - "/home/adrian/Datasets/LateralRoot/Val"
+    - "C:\\Users\\loren\\deep_apbs\\val_sub"
     slice_builder:
       name: FilterSliceBuilder
-      patch_shape: [80, 144, 144]
+      patch_shape: [64, 64, 64]
       slack_acceptance: 0.01
-      stride_shape: [80, 144, 144]
+      stride_shape: [10, 10, 10]
       threshold: 0.4
     transformer:
       label:
-      - append_label: true
-        blur: true
-        name: StandardLabelToBoundary
-        sigma: 1.0
-      - expand_dims: false
+      - expand_dims: true
         name: ToTensor
       raw:
       - name: Standardize
@@ -76,7 +61,7 @@ loaders:
 loss:
   ignore_index: null
   name: BCEDiceLoss
-  skip_last_target: true
+#  skip_last_target: true
 lr_scheduler:
   factor: 0.2
   mode: min
@@ -88,17 +73,19 @@ model:
   final_sigmoid: true
   in_channels: 1
   layer_order: gcr
-  name: ResidualUNet3D
+  # name: ResidualUNet3D
+  name: UNet3D
   num_groups: 8
   out_channels: 1
 optimizer:
   learning_rate: 0.0002
   weight_decay: 1.0e-05
 trainer:
-  checkpoint_dir: "/home/adrian/Datasets/LateralRoot/"
+  checkpoint_dir: "C:\\Users\\loren\\deep_apbs\\checkpoint_sub2"
   max_num_epochs: 1000
   eval_score_higher_is_better: false
   max_num_iterations: 150000
-  log_after_iters: 250
+  # log_after_iters: 250
+  log_after_iters: 20
   resume: null
   validate_after_iters: 1000

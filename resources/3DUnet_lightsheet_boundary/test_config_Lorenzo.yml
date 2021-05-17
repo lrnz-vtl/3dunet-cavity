@@ -1,27 +1,26 @@
-# Download test data from: https://osf.io/8jz7e/
-
 loaders:
-  batch_size: 4
+  batch_size: 1
   mirror_padding:
   - 16
   - 32
   - 32
   num_workers: 8
-  output_dir: "/home/adrian/Datasets/Ovules/predictions"
+  # directory where the output from the model will be saved
+  output_dir: "C:\\Users\\loren\\deep_apbs\\predictions"
   raw_internal_path: raw
   test:
     file_paths:
-    - "/home/adrian/Datasets/Ovules/Test"
+    - "C:\\Users\\loren\\deep_apbs\\test"
     slice_builder:
       name: SliceBuilder
       patch_shape:
-      - 48
       - 80
-      - 80
+      - 144
+      - 144
       stride_shape:
-      - 24
       - 40
-      - 40
+      - 90
+      - 90
     transformer:
       raw:
       - name: Standardize
@@ -33,10 +32,10 @@ model:
   final_sigmoid: true
   in_channels: 1
   is_segmentation: true
-  layer_order: bcr
+  layer_order: gcr
   name: UNet3D
-  num_groups: null
+  num_groups: 8
   out_channels: 1
-model_path: "/home/adrian/Datasets/Ovules/best_checkpoint.pytorch"
+model_path: "C:\\Users\\loren\\deep_apbs\\checkpoint_sub2\\best_checkpoint.pytorch"
 predictor:
   name: StandardPredictor
