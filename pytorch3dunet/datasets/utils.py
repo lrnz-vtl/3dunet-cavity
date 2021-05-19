@@ -144,7 +144,7 @@ class FilterSliceBuilder(SliceBuilder):
             return
 
         rand_state = np.random.RandomState(47)
-        print("Inside FilterSlice Builder")
+        # print("Inside FilterSlice Builder")
 
         def ignore_predicate(raw_label_idx):
             label_idx = raw_label_idx[1]
