@@ -233,7 +233,7 @@ class AbstractHDF5Dataset(ConfigDataset):
         for file_path in file_paths:
             try:
                 logger.info(f'Loading {phase} set from: {file_path}...')
-                print("Making dataset")
+                # print("Making dataset")
                 dataset = cls(file_path=file_path,
                               phase=phase,
                               slice_builder_config=slice_builder_config,

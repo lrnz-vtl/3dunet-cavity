@@ -1,35 +1,42 @@
 import importlib
 import os
-
 import torch
 import torch.nn as nn
-
 from pytorch3dunet.datasets.utils import get_test_loaders
 from pytorch3dunet.unet3d import utils
 from pytorch3dunet.unet3d.config import load_config
 from pytorch3dunet.unet3d.model import get_model
-
+from argparse import ArgumentParser
 import yaml
 from pathlib import Path
 
-num_workers = 8
-
 logger = utils.get_logger('UNet3DPredict')
 
-base = Path(rf"C:\Users\loren\cavityPred")
-testpath = base / "train_sub"
-predpath = base / "train_sub_pred"
-checkpointpath = base / "checkpoint_sub2"
-base_config = rf"C:\Users\loren\pytorch-3dunet\resources\3DUnet_lightsheet_boundary\test_config_Lorenzo.yml"
+checkpointname = "checkpoint"
+predname = 'predictions'
+base_config_test = "test_config_base.yml"
+
+base_config_train = "train_config_base.yml"
 
 
-def load_config():
-    config = yaml.safe_load(open(base_config, 'r'))
+def load_config(runconfig, nworkers):
+    config = yaml.safe_load(open(base_config_test, 'r'))
+    train_config = yaml.safe_load(open(base_config_train, 'r'))
 
-    config['loaders']['output_dir'] = str(predpath)
-    config['loaders']['test']['file_paths'] = [str(testpath)]
-    config['loaders']['num_workers'] = num_workers
-    config['model_path'] = checkpointpath / "best_checkpoint.pytorch"
+    dataFolder = Path(runconfig['dataFolder'])
+    runFolder = Path(runconfig['runFolder'])
+
+    config['loaders']['output_dir'] = str(runFolder / predname)
+
+    config['loaders']['test']['file_paths'] = [str(dataFolder / name) for name in runconfig['test']]
+
+    config['loaders']['num_workers'] = nworkers
+
+    checkpoint_dir = runFolder / checkpointname
+    config['model_path'] = str(checkpoint_dir / "best_checkpoint.pytorch")
+
+    # Copy model from train conf
+    config['model'] = train_config['model']
 
     # Get a device to train on
     device_str = config.get('device', None)
@@ -46,21 +53,30 @@ def load_config():
     config['device'] = device
     return config
 
+
 def _get_predictor(model, output_dir, config):
-    predictor_config = load_config()
+    predictor_config = config.get('predictor', {})
     class_name = predictor_config.get('name', 'StandardPredictor')
 
     m = importlib.import_module('pytorch3dunet.unet3d.predictor')
     predictor_class = getattr(m, class_name)
 
-    del predictor_config['model']
-
     return predictor_class(model, output_dir, config, **predictor_config)
 
 
 def main():
+    parser = ArgumentParser()
+    parser.add_argument("-r", "--runconfig", dest='runconfig', type=str, required=True,
+                        help=f"The run config yaml file")
+    parser.add_argument("-n", "--numworkers", dest='numworkers', type=int, required=True,
+                        help=f"Number of workers")
+
+    args = parser.parse_args()
+    runconfig = args.runconfig
+    nworkers = int(args.numworkers)
+
     # Load configuration
-    config = load_config()
+    config = load_config(yaml.safe_load(open(runconfig,'r')), nworkers)
 
     # Create the model
     model = get_model(config['model'])
@@ -89,7 +105,6 @@ def main():
     for test_loader in get_test_loaders(config):
         # run the model prediction on the test_loader and save the results in the output_dir
         predictor(test_loader)
-
 
 if __name__ == '__main__':
     main()

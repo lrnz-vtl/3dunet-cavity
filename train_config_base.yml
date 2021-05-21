@@ -1,9 +1,3 @@
-# Sample configuration file for training a 3D U-Net on a task of predicting the boundaries in 3D stack of the Arabidopsis lateral root
-# acquired with the lightsheet microscope. Training done with a combination of Binary Cross-Entropy and DiceLoss.
-# Download training data from: https://osf.io/9x3g2/
-# Download validation data from: https://osf.io/vs6gb/
-# Download test data from: https://osf.io/tn4xj/
-
 trainer:
   max_num_epochs: 1000
   eval_score_higher_is_better: false
