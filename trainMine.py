@@ -5,7 +5,7 @@ from pytorch3dunet.datasets.utils import get_class
 from pytorch3dunet.unet3d.utils import get_logger
 from argparse import ArgumentParser
 import os
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+# os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 # testpath = Path(rf"C:\Users\loren\deep_apbs") / "test_sub"
 # trainpath = Path(rf"C:\Users\loren\deep_apbs") / "train_sub"
