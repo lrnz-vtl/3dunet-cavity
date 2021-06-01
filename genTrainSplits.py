@@ -24,6 +24,8 @@ if __name__=='__main__':
     base_data = Path(os.path.abspath(args.base_data))
     base_run = Path(os.path.abspath(args.dest))
 
+    os.makedirs(base_run, exist_ok=True)
+
     clusterfname = args.clusterfile
     if clusterfname is not None and not os.path.exists(clusterfname):
         print(f"Cluster file '{clusterfname}' not found", file=sys.stderr)
@@ -101,7 +103,6 @@ if __name__=='__main__':
          'dataFolder': str(base_data),
          'useClusters' : useClusters}
 
-    os.makedirs(base_run, exist_ok=True)
     dstFname = base_run / outputName
     with open(dstFname, 'w') as f:
         yaml.dump(x, f, allow_unicode=True)
