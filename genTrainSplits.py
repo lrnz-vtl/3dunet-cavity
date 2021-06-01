@@ -5,7 +5,7 @@ from pathlib import Path
 from argparse import ArgumentParser
 import sys
 import shutil
-import regex as re
+import re
 import random
 
 outputName = "run_config.yml"
@@ -17,7 +17,7 @@ if __name__=='__main__':
     parser.add_argument("-d", "--dst", dest='dest', type=str, required=True,
                         help="destination folder")
     parser.add_argument("-c", "--clusterfile", dest='clusterfile', type=str, default=None,
-                        help="Optional, the output of cd-hit used to determine clusters")
+                        help="Optional, the output of cd-hit used to determine clusters (.clstr)")
 
     args = parser.parse_args()
 
@@ -87,7 +87,7 @@ if __name__=='__main__':
         while len(names_val) < n*0.2:
             names_val += clusters[i]
             i += 1
-        while i < n:
+        while i < len(clusters):
             names_test += clusters[i]
             i += 1
 
