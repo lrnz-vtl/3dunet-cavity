@@ -2,20 +2,24 @@ import torch
 import yaml
 from pathlib import Path
 from pytorch3dunet.datasets.utils import get_class
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import get_logger, str2bool
 from argparse import ArgumentParser
-import os
-# os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
-# testpath = Path(rf"C:\Users\loren\deep_apbs") / "test_sub"
-# trainpath = Path(rf"C:\Users\loren\deep_apbs") / "train_sub"
-# valpath = Path(rf"C:\Users\loren\deep_apbs") / "val_sub"
 checkpointname = "checkpoint"
-base_config = "train_config_base.yml"
+
+base_config_default = "train_config_base.yml"
+base_config_test = "train_config_test.yml"
 
 logger = get_logger('TrainingSetup')
 
-def load_config(runconfig, nworkers):
+def load_config(runconfig, nworkers, device, test):
+    runconfig = yaml.safe_load(open(runconfig, 'r'))
+
+    if test:
+        base_config = base_config_test
+    else:
+        base_config = base_config_default
+
     config = yaml.safe_load(open(base_config, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
@@ -26,7 +30,15 @@ def load_config(runconfig, nworkers):
 
     config['loaders']['num_workers'] = nworkers
 
-    config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)
+    suf = ''
+    if test:
+        suf = '_test'
+
+    config['trainer']['checkpoint_dir'] = str(runFolder / (checkpointname + suf))
+
+    # Get a device to train on
+    if device is not None:
+        config['device'] = device
 
     # Get a device to train on
     device_str = config.get('device', None)
@@ -50,12 +62,16 @@ if __name__=='__main__':
                         help=f"The run config yaml file")
     parser.add_argument("-n", "--numworkers", dest='numworkers', type=int, required=True,
                         help=f"Number of workers")
+    parser.add_argument("-d", "--device", dest='device', type=str, required=False,
+                        help=f"Device")
+    parser.add_argument("-t", "--test", type=str2bool, nargs='?', const=True, default=False,
+                        help="Test run.")
 
     args = parser.parse_args()
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
 
-    config = load_config(yaml.safe_load(open(runconfig,'r')), nworkers)
+    config = load_config(runconfig, nworkers, args.device, args.test)
     logger.info(config)
 
     manual_seed = config.get('manual_seed', None)

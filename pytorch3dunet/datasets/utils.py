@@ -1,6 +1,5 @@
 import collections
 import importlib
-
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
@@ -93,7 +92,6 @@ class SliceBuilder:
             [(slice, slice, slice, slice), ...] if len(shape) == 4
             [(slice, slice, slice), ...] if len(shape) == 3
         """
-        # NOTE LORENZO
         slices = []
         if dataset.ndim == 4:
             in_channels, i_z, i_y, i_x = dataset.shape
@@ -130,6 +128,58 @@ class SliceBuilder:
     def _check_patch_shape(patch_shape):
         assert len(patch_shape) == 3, 'patch_shape must be a 3D tuple'
         assert patch_shape[1] >= 64 and patch_shape[2] >= 64, 'Height and Width must be greater or equal 64'
+
+
+class TrivialSliceBuilder:
+    """
+    Builds the position of the patches in a given raw/label/weight ndarray based on the the patch and stride shape
+    """
+
+    def __init__(self, raw_datasets, label_datasets, weight_dataset, **kwargs):
+        """
+        :param raw_datasets: ndarray of raw data
+        :param label_datasets: ndarray of ground truth labels
+        :param weight_dataset: ndarray of weights for the labels
+        :param patch_shape: the shape of the patch DxHxW
+        :param stride_shape: the shape of the stride DxHxW
+        :param kwargs: additional metadata
+        """
+
+        skip_shape_check = kwargs.get('skip_shape_check', False)
+
+        self._raw_slices = self._build_slices(raw_datasets[0])
+        if label_datasets is None:
+            self._label_slices = None
+        else:
+            # take the first element in the label_datasets to build slices
+            self._label_slices = self._build_slices(label_datasets[0])
+            assert len(self._raw_slices) == len(self._label_slices)
+        if weight_dataset is None:
+            self._weight_slices = None
+        else:
+            self._weight_slices = self._build_slices(weight_dataset[0])
+            assert len(self.raw_slices) == len(self._weight_slices)
+
+    @property
+    def raw_slices(self):
+        return self._raw_slices
+
+    @property
+    def label_slices(self):
+        return self._label_slices
+
+    @property
+    def weight_slices(self):
+        return self._weight_slices
+
+    @staticmethod
+    def _build_slices(dataset):
+        if dataset.ndim == 4:
+            in_channels, i_z, i_y, i_x = dataset.shape
+        else:
+            i_z, i_y, i_x = dataset.shape
+        slices = [(slice(0,i_z),slice(0,i_y),slice(0,i_x))]
+        return slices
 
 
 class FilterSliceBuilder(SliceBuilder):

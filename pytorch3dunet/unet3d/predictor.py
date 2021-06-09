@@ -108,9 +108,15 @@ class StandardPredictor(_AbstractPredictor):
 
         logger.info(f'The shape of the output prediction maps (CDHW): {prediction_maps_shape}')
 
-        patch_halo = self.predictor_config.get('patch_halo', (4, 8, 8))
-        self._validate_halo(patch_halo, self.config['loaders']['test']['slice_builder'])
-        logger.info(f'Using patch_halo: {patch_halo}')
+
+        slice_builder_config = self.config['loaders']['test']['slice_builder']
+        if slice_builder_config['name'] == 'TrivialSliceBuilder':
+            patch_halo = None
+            logger.info(f'Skipping halo validation because of Trivial Slice Builder (TO BE IMPLEMENTED)')
+        else:
+            patch_halo = self.predictor_config.get('patch_halo', (4, 8, 8))
+            self._validate_halo(patch_halo, self.config['loaders']['test']['slice_builder'])
+            logger.info(f'Using patch_halo: {patch_halo}')
 
         # create destination H5 file
         h5_output_file = h5py.File(output_file, 'w')
@@ -159,8 +165,12 @@ class StandardPredictor(_AbstractPredictor):
 
                         logger.info(f'Saving predictions for slice:{index}...')
 
-                        # remove halo in order to avoid block artifacts in the output probability maps
-                        u_prediction, u_index = remove_halo(pred, index, volume_shape, patch_halo)
+                        if patch_halo is None:
+                            logger.info(f'Skipping halo removal because of Trivial Slice Builder (TO BE IMPLEMENTED)')
+                            u_prediction, u_index = pred, index
+                        else:
+                            # remove halo in order to avoid block artifacts in the output probability maps
+                            u_prediction, u_index = remove_halo(pred, index, volume_shape, patch_halo)
                         # accumulate probabilities into the output prediction array
                         prediction_map[u_index] += u_prediction
                         # count voxel visits for normalization

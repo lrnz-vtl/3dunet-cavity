@@ -1,0 +1,16 @@
+loaders:
+  batch_size: 1
+  raw_internal_path: raw
+  test:
+    slice_builder:
+      name: TrivialSliceBuilder
+    transformer:
+      raw:
+        - expand_dims: true
+          name: ToTensor
+manual_seed: 0
+model:
+  name: PixelWiseModel
+  out_channels: 1
+predictor:
+  name: StandardPredictor

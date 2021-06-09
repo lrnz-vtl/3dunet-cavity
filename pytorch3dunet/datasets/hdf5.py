@@ -42,7 +42,6 @@ class AbstractHDF5Dataset(ConfigDataset):
         :param weight_internal_path (str or list): H5 internal path to the per pixel weights
         :param a number between (0, 1]: specifies a fraction of ground truth instances to be sampled from the dense ground truth labels
         """
-        print("Inside AbstractHDF5Dataset")
 
         assert phase in ['train', 'val', 'test']
         if phase in ['train', 'val']:
@@ -124,9 +123,7 @@ class AbstractHDF5Dataset(ConfigDataset):
                 self.raws = padded_volumes
 
         # build slice indices for raw and label data sets
-        # NOTE Lorenzo
         slice_builder = get_slice_builder(self.raws, self.labels, self.weight_maps, slice_builder_config)
-        print("Made slice builder")
         self.raw_slices = slice_builder.raw_slices
         self.label_slices = slice_builder.label_slices
         self.weight_slices = slice_builder.weight_slices
@@ -233,7 +230,6 @@ class AbstractHDF5Dataset(ConfigDataset):
         for file_path in file_paths:
             try:
                 logger.info(f'Loading {phase} set from: {file_path}...')
-                # print("Making dataset")
                 dataset = cls(file_path=file_path,
                               phase=phase,
                               slice_builder_config=slice_builder_config,
@@ -246,7 +242,8 @@ class AbstractHDF5Dataset(ConfigDataset):
                 # NOTE Lorenzo
                 datasets.append(dataset)
             except Exception:
-                logger.error(f'Skipping {phase} set: {file_path}', exc_info=False)
+                logger.error(f'Skipping {phase} set: {file_path}', exc_info=True)
+
         return datasets
 
     @staticmethod

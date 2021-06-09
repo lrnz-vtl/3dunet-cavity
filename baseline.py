@@ -7,41 +7,26 @@ from pytorch3dunet.unet3d import utils
 from pytorch3dunet.unet3d.config import load_config
 from pytorch3dunet.unet3d.model import get_model
 from argparse import ArgumentParser
-import argparse
 import yaml
 from pathlib import Path
 
 logger = utils.get_logger('UNet3DPredict')
 
-checkpointname = "checkpoint"
-predname = 'predictions'
-base_config_test = "test_config_base.yml"
-base_config_train = "train_config_base.yml"
+predname = 'predictions_baseline'
+base_config_test = "test_config_baseline.yml"
 
-
-def load_config(runconfig, nworkers, device, test):
+def load_config(runconfig, nworkers, device):
     runconfig = yaml.safe_load(open(runconfig, 'r'))
     config = yaml.safe_load(open(base_config_test, 'r'))
-    train_config = yaml.safe_load(open(base_config_train, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
     runFolder = Path(runconfig['runFolder'])
 
-    suf = ''
-    if test:
-        suf = '_test'
-
-    config['loaders']['output_dir'] = str(runFolder / (predname + suf))
+    config['loaders']['output_dir'] = str(runFolder / predname)
 
     config['loaders']['test']['file_paths'] = [str(dataFolder / name) for name in runconfig['test']]
 
     config['loaders']['num_workers'] = nworkers
-
-    checkpoint_dir = runFolder / checkpointname
-    config['model_path'] = str(checkpoint_dir / "best_checkpoint.pytorch")
-
-    # Copy model from train conf
-    config['model'] = train_config['model']
 
     # Get a device to train on
     if device is not None:
@@ -71,7 +56,6 @@ def _get_predictor(model, output_dir, config):
     return predictor_class(model, output_dir, config, **predictor_config)
 
 
-
 def main():
     parser = ArgumentParser()
     parser.add_argument("-r", "--runconfig", dest='runconfig', type=str, required=True,
@@ -80,23 +64,17 @@ def main():
                         help=f"Number of workers")
     parser.add_argument("-d", "--device", dest='device', type=str, required=False,
                         help=f"Device")
-    parser.add_argument("-t", "--test", type=utils.str2bool, nargs='?', const=True, default=False,
-                        help="Test run.")
 
     args = parser.parse_args()
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
 
     # Load configuration
-    config = load_config(runconfig, nworkers, args.device, args.test)
+    config = load_config(runconfig, nworkers, args.device)
 
     # Create the model
     model = get_model(config['model'])
 
-    # Load model state
-    model_path = config['model_path']
-    logger.info(f'Loading model from {model_path}...')
-    utils.load_checkpoint(model_path, model)
     # use DataParallel if more than 1 GPU available
     device = config['device']
     if torch.cuda.device_count() > 1 and not device.type == 'cpu':

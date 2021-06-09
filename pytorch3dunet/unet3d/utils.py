@@ -3,7 +3,7 @@ import logging
 import os
 import shutil
 import sys
-
+import argparse
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
@@ -371,3 +371,13 @@ def create_sample_plotter(sample_plotter_config):
     m = importlib.import_module('pytorch3dunet.unet3d.utils')
     clazz = getattr(m, class_name)
     return clazz(**sample_plotter_config)
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
