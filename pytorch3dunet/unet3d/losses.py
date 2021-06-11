@@ -18,8 +18,6 @@ def compute_per_channel_dice(input, target, epsilon=1e-6, weight=None):
          epsilon (float): prevents division by zero
          weight (torch.Tensor): Cx1 tensor of weight per channel/class
     """
-    # NOTE Lorenzo
-    # print(f"Sizes: {input.size()}, {target.size()}")
     # input and target shapes must match
     assert input.size() == target.size(), "'input' and 'target' must have the same shape"
 
@@ -112,9 +110,6 @@ class _AbstractDiceLoss(nn.Module):
         # get probabilities from logits
         input = self.normalization(input)
 
-        # NOTE LORENZO
-        # print("Shapes:", input.shape, target.shape)
-
         # compute per channel Dice coefficient
         per_channel_dice = self.dice(input, target, weight=self.weight)
 
@@ -132,7 +127,6 @@ class DiceLoss(_AbstractDiceLoss):
         super().__init__(weight, normalization)
 
     def dice(self, input, target, weight):
-        pass
         return compute_per_channel_dice(input, target, weight=self.weight)
 
 
@@ -180,6 +174,20 @@ class BCEDiceLoss(nn.Module):
         self.bce = nn.BCEWithLogitsLoss()
         self.beta = beta
         self.dice = DiceLoss()
+
+    def forward(self, input, target):
+        return self.alpha * self.bce(input, target) + self.beta * self.dice(input, target)
+
+
+class BCEDiceProbLoss(nn.Module):
+    """ Same as BCEDiceLoss but applied to probabilities instead of logits """
+
+    def __init__(self, alpha, beta):
+        super(BCEDiceProbLoss, self).__init__()
+        self.alpha = alpha
+        self.bce = nn.BCELoss()
+        self.beta = beta
+        self.dice = DiceLoss(normalization='none')
 
     def forward(self, input, target):
         return self.alpha * self.bce(input, target) + self.beta * self.dice(input, target)

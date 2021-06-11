@@ -1,6 +1,6 @@
 trainer:
   max_num_epochs: 10
-  eval_score_higher_is_better: false
+  eval_score_higher_is_better: true
   max_num_iterations: 150
   log_after_iters: 5
   resume: null

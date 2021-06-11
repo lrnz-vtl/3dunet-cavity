@@ -2,39 +2,29 @@ import torch
 import yaml
 from pathlib import Path
 from pytorch3dunet.datasets.utils import get_class
-from pytorch3dunet.unet3d.utils import get_logger, str2bool
+from pytorch3dunet.unet3d.utils import get_logger
 from argparse import ArgumentParser
 
 checkpointname = "checkpoint"
 
-base_config_default = "train_config_base.yml"
-base_config_test = "train_config_test.yml"
-
 logger = get_logger('TrainingSetup')
 
-def load_config(runconfig, nworkers, device, test):
+def load_config(runconfig, nworkers, device):
     runconfig = yaml.safe_load(open(runconfig, 'r'))
-
-    if test:
-        base_config = base_config_test
-    else:
-        base_config = base_config_default
-
-    config = yaml.safe_load(open(base_config, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
     runFolder = Path(runconfig['runFolder'])
+
+    train_config = Path(runconfig['runFolder']) / 'train_config.yml'
+
+    config = yaml.safe_load(open(train_config, 'r'))
 
     config['loaders']['train']['file_paths'] = [str(dataFolder / name) for name in runconfig['train']]
     config['loaders']['val']['file_paths'] = [str(dataFolder / name) for name in runconfig['val']]
 
     config['loaders']['num_workers'] = nworkers
 
-    suf = ''
-    if test:
-        suf = '_test'
-
-    config['trainer']['checkpoint_dir'] = str(runFolder / (checkpointname + suf))
+    config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)
 
     # Get a device to train on
     if device is not None:
@@ -64,14 +54,12 @@ if __name__=='__main__':
                         help=f"Number of workers")
     parser.add_argument("-d", "--device", dest='device', type=str, required=False,
                         help=f"Device")
-    parser.add_argument("-t", "--test", type=str2bool, nargs='?', const=True, default=False,
-                        help="Test run.")
 
     args = parser.parse_args()
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
 
-    config = load_config(runconfig, nworkers, args.device, args.test)
+    config = load_config(runconfig, nworkers, args.device)
     logger.info(config)
 
     manual_seed = config.get('manual_seed', None)

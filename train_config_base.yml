@@ -1,8 +1,7 @@
 trainer:
   max_num_epochs: 1000
-  eval_score_higher_is_better: false
+  eval_score_higher_is_better: true
   max_num_iterations: 150000
-  # log_after_iters: 250
   log_after_iters: 250
   resume: null
   validate_after_iters: 1000
@@ -59,7 +58,6 @@ loaders:
 loss:
   ignore_index: null
   name: BCEDiceLoss
-#  skip_last_target: true
 lr_scheduler:
   factor: 0.2
   mode: min

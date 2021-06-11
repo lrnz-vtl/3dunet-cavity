@@ -7,22 +7,33 @@ from pytorch3dunet.unet3d import utils
 from pytorch3dunet.unet3d.config import load_config
 from pytorch3dunet.unet3d.model import get_model
 from argparse import ArgumentParser
-import argparse
 import yaml
 from pathlib import Path
 
 logger = utils.get_logger('UNet3DPredict')
 
 checkpointname = "checkpoint"
+
 predname = 'predictions'
-base_config_test = "test_config_base.yml"
-base_config_train = "train_config_base.yml"
+
+test_config_default = "test_config_base.yml"
+train_config_default = "train_config_base.yml"
+test_config_test = "test_config_test.yml"
+train_config_test = "train_config_test.yml"
 
 
 def load_config(runconfig, nworkers, device, test):
     runconfig = yaml.safe_load(open(runconfig, 'r'))
-    config = yaml.safe_load(open(base_config_test, 'r'))
-    train_config = yaml.safe_load(open(base_config_train, 'r'))
+
+    if test:
+        test_config = test_config_test
+        train_config = train_config_test
+    else:
+        test_config = test_config_default
+        train_config = train_config_default
+
+    config = yaml.safe_load(open(test_config, 'r'))
+    train_config = yaml.safe_load(open(train_config, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
     runFolder = Path(runconfig['runFolder'])

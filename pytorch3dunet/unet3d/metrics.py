@@ -34,13 +34,14 @@ class MeanIoU:
     Computes IoU for each class separately and then averages over all classes.
     """
 
-    def __init__(self, skip_channels=(), ignore_index=None, **kwargs):
+    def __init__(self, skip_channels=(), ignore_index=None, is_binarized=False, **kwargs):
         """
         :param skip_channels: list/tuple of channels to be ignored from the IoU computation
         :param ignore_index: id of the label to be ignored from IoU computation
         """
         self.ignore_index = ignore_index
         self.skip_channels = skip_channels
+        self.is_binarized = is_binarized
 
     def __call__(self, input, target):
         """
@@ -91,7 +92,10 @@ class MeanIoU:
         """
         if n_classes == 1:
             # for single channel input just threshold the probability map
-            result = input > 0.5
+            if self.is_binarized:
+                result = input
+            else:
+                result = input > 0.5
             return result.long()
 
         _, max_index = torch.max(input, dim=0, keepdim=True)

@@ -104,6 +104,21 @@ class Abstract3DUNet(nn.Module):
         return x
 
 
+class LogisticRegression(torch.nn.Module):
+    def __init__(self, testing=False, **kwargs):
+        super(LogisticRegression, self).__init__()
+        self.testing = testing
+        # Pixel wise
+        self.linear = nn.Linear(1, 1)
+
+    def forward(self, x):
+        if self.testing:
+            output = nn.sigmoid(self.linear(x))
+        else:
+            output = self.linear(x)
+        return output
+
+
 class PixelWiseModel(nn.Module):
     """
     Baseline class for pixelwise models
