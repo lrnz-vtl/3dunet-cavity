@@ -16,3 +16,5 @@ logs/
 # Python packages
 pytorch3dunet.egg-info/
 dist/
+
+runs/
