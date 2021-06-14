@@ -16,21 +16,11 @@ checkpointname = "checkpoint"
 
 predname = 'predictions'
 
-test_config_default = "test_config_base.yml"
-train_config_default = "train_config_base.yml"
-test_config_test = "test_config_test.yml"
-train_config_test = "train_config_test.yml"
-
-
-def load_config(runconfig, nworkers, device, test):
+def load_config(runconfig, nworkers, device):
     runconfig = yaml.safe_load(open(runconfig, 'r'))
 
-    if test:
-        test_config = test_config_test
-        train_config = train_config_test
-    else:
-        test_config = test_config_default
-        train_config = train_config_default
+    train_config = Path(runconfig['runFolder']) / 'train_config.yml'
+    test_config = Path(runconfig['runFolder']) / 'test_config.yml'
 
     config = yaml.safe_load(open(test_config, 'r'))
     train_config = yaml.safe_load(open(train_config, 'r'))
@@ -38,11 +28,7 @@ def load_config(runconfig, nworkers, device, test):
     dataFolder = Path(runconfig['dataFolder'])
     runFolder = Path(runconfig['runFolder'])
 
-    suf = ''
-    if test:
-        suf = '_test'
-
-    config['loaders']['output_dir'] = str(runFolder / (predname + suf))
+    config['loaders']['output_dir'] = str(runFolder / predname)
 
     config['loaders']['test']['file_paths'] = [str(dataFolder / name) for name in runconfig['test']]
 
@@ -91,15 +77,13 @@ def main():
                         help=f"Number of workers")
     parser.add_argument("-d", "--device", dest='device', type=str, required=False,
                         help=f"Device")
-    parser.add_argument("-t", "--test", type=utils.str2bool, nargs='?', const=True, default=False,
-                        help="Test run.")
 
     args = parser.parse_args()
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
 
     # Load configuration
-    config = load_config(runconfig, nworkers, args.device, args.test)
+    config = load_config(runconfig, nworkers, args.device)
 
     # Create the model
     model = get_model(config['model'])
