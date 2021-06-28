@@ -368,6 +368,7 @@ class UNet3DTrainer:
                 if i % 100 == 0:
                     self._log_images(input, target, output, 'val_')
 
+                # mmin,mmax = output.min(), output.max()
                 eval_score = self.eval_criterion(output, target)
                 val_scores.update(eval_score.item(), self._batch_size(input))
 
@@ -402,6 +403,7 @@ class UNet3DTrainer:
         output = self.model(input)
 
         # compute the loss
+        # assert ((output <= 1.0) & (output >= 0.0)).all()
         if weight is None:
             loss = self.loss_criterion(output, target)
         else:

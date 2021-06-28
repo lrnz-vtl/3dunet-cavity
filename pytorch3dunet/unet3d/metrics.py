@@ -34,14 +34,14 @@ class MeanIoU:
     Computes IoU for each class separately and then averages over all classes.
     """
 
-    def __init__(self, skip_channels=(), ignore_index=None, is_binarized=False, **kwargs):
+    def __init__(self, skip_channels=(), ignore_index=None, thres=0.5, **kwargs):
         """
         :param skip_channels: list/tuple of channels to be ignored from the IoU computation
         :param ignore_index: id of the label to be ignored from IoU computation
         """
         self.ignore_index = ignore_index
         self.skip_channels = skip_channels
-        self.is_binarized = is_binarized
+        self.thres = thres
 
     def __call__(self, input, target):
         """
@@ -60,7 +60,7 @@ class MeanIoU:
 
         per_batch_iou = []
         for _input, _target in zip(input, target):
-            binary_prediction = self._binarize_predictions(_input, n_classes)
+            binary_prediction = self._binarize_predictions(_input, n_classes, self.thres)
 
             if self.ignore_index is not None:
                 # zero out ignore_index
@@ -85,17 +85,14 @@ class MeanIoU:
 
         return torch.mean(torch.tensor(per_batch_iou))
 
-    def _binarize_predictions(self, input, n_classes):
+    def _binarize_predictions(self, input, n_classes, thres):
         """
         Puts 1 for the class/channel with the highest probability and 0 in other channels. Returns byte tensor of the
         same size as the input tensor.
         """
         if n_classes == 1:
             # for single channel input just threshold the probability map
-            if self.is_binarized:
-                result = input
-            else:
-                result = input > 0.5
+            result = input >= thres
             return result.long()
 
         _, max_index = torch.max(input, dim=0, keepdim=True)
