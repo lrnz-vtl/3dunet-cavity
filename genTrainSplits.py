@@ -44,7 +44,7 @@ if __name__=='__main__':
         useClusters = False
 
         names = []
-        for ddir in glob.glob(str(base_data) + rf"/**/*_grids.h5"):
+        for ddir in glob.glob(str(base_data) + f"/**/*_grids.h5"):
             pdir = Path(ddir)
             names.append(pdir.parent.name)
 
