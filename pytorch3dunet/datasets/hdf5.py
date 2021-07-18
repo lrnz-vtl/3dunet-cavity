@@ -2,9 +2,12 @@ import glob
 import os
 from itertools import chain
 from multiprocessing import Lock
-
+from pathlib import Path
 import h5py
 import numpy as np
+
+from collections import namedtuple
+
 
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
@@ -13,6 +16,7 @@ from pytorch3dunet.unet3d.utils import get_logger
 logger = get_logger('HDF5Dataset')
 lock = Lock()
 
+DataPaths = namedtuple("DataPaths", "h5_path pdb_path")
 
 class AbstractHDF5Dataset(ConfigDataset):
     """
@@ -220,7 +224,7 @@ class AbstractHDF5Dataset(ConfigDataset):
         file_paths = phase_config['file_paths']
         # file_paths may contain both files and directories; if the file_path is a directory all H5 files inside
         # are going to be included in the final file_paths
-        file_paths = cls.traverse_h5_paths(file_paths)
+        file_paths = cls.traverse_h5_pdb_paths(file_paths)
 
         # load instance sampling configuration
         instance_ratio = phase_config.get('instance_ratio', None)
@@ -260,6 +264,26 @@ class AbstractHDF5Dataset(ConfigDataset):
                 results.append(file_path)
         return results
 
+    @staticmethod
+    def traverse_h5_pdb_paths(file_paths):
+        assert isinstance(file_paths, list)
+        results = []
+        for file_path in file_paths:
+            if os.path.isdir(file_path):
+                # if file path is a directory take all H5 files in that directory
+                iters = [glob.glob(os.path.join(file_path, ext)) for ext in ['*.h5', '*.hdf', '*.hdf5', '*.hd5']]
+                for fp in chain(*iters):
+                    p = Path(fp)
+                    protname = p.name.split('.')[0].split('_')[0]
+                    pdbpath = None
+                    pdbfname = Path(file_path) / f"{protname}_selected.pdb"
+                    if os.path.exists(pdbfname):
+                        pdbpath = str(pdbfname)
+                    results.append(DataPaths(h5_path=fp, pdb_path=pdbpath))
+            else:
+                results.append(file_path)
+        return results
+
 
 class StandardHDF5Dataset(AbstractHDF5Dataset):
     """
@@ -283,7 +307,7 @@ class StandardHDF5Dataset(AbstractHDF5Dataset):
 
     @staticmethod
     def create_h5_file(file_path, internal_paths):
-        return h5py.File(file_path, 'r')
+        return h5py.File(file_path.h5_path, 'r')
 
     @staticmethod
     def fetch_datasets(input_file_h5, internal_paths):

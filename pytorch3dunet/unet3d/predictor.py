@@ -10,15 +10,18 @@ from pytorch3dunet.datasets.utils import SliceBuilder
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
 
+from pytorch3dunet.datasets.hdf5 import DataPaths
+
 logger = get_logger('UNetPredictor')
 
 
 def _get_output_file(dataset, suffix='_predictions', output_dir=None):
-    input_dir, file_name = os.path.split(dataset.file_path)
+    input_dir, file_name = os.path.split(dataset.file_path.h5_path)
     if output_dir is None:
         output_dir = input_dir
-    output_file = os.path.join(output_dir, os.path.splitext(file_name)[0] + suffix + '.h5')
-    return output_file
+    output_file_h5 = os.path.join(output_dir, os.path.splitext(file_name)[0] + suffix + '.h5')
+    output_file_pdb = os.path.join(output_dir, os.path.splitext(file_name.split('_')[0])[0] + suffix + '.pdb')
+    return DataPaths(output_file_h5, output_file_pdb)
 
 
 def _get_dataset_names(config, number_of_datasets, prefix='predictions'):

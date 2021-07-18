@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+torch = "*"
+pyyaml = "*"
+numpy = "*"
+h5py = "*"
+matplotlib = "*"
+tensorboardx = "*"
+scikit-image = "*"
+torchvision = "*"
+jupyter = "*"
+prody = "*"
+potsim2 = {path = "./potsim2-master.zip"}
+griddataformats = {file = "https://github.com/MDAnalysis/GridDataFormats/archive/master.zip"}
+
+[dev-packages]
+
+[requires]
+python_version = "3.8"
