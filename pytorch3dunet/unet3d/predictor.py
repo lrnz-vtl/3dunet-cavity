@@ -10,7 +10,11 @@ from pytorch3dunet.datasets.utils import SliceBuilder
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
 
-from pytorch3dunet.datasets.hdf5 import DataPaths
+from collections import namedtuple
+from potsim2 import PotGrid
+import prody
+
+OutputPaths = namedtuple("OutputPaths", "h5_path pdb_path")
 
 logger = get_logger('UNetPredictor')
 
@@ -21,7 +25,7 @@ def _get_output_file(dataset, suffix='_predictions', output_dir=None):
         output_dir = input_dir
     output_file_h5 = os.path.join(output_dir, os.path.splitext(file_name)[0] + suffix + '.h5')
     output_file_pdb = os.path.join(output_dir, os.path.splitext(file_name.split('_')[0])[0] + suffix + '.pdb')
-    return DataPaths(output_file_h5, output_file_pdb)
+    return OutputPaths(h5_path=output_file_h5, pdb_path=output_file_pdb)
 
 
 def _get_dataset_names(config, number_of_datasets, prefix='predictions'):
@@ -122,7 +126,7 @@ class StandardPredictor(_AbstractPredictor):
             logger.info(f'Using patch_halo: {patch_halo}')
 
         # create destination H5 file
-        h5_output_file = h5py.File(output_file, 'w')
+        h5_output_file = h5py.File(output_file.h5_path, 'w')
         # allocate prediction and normalization arrays
         logger.info('Allocating prediction and normalization arrays...')
         prediction_maps, normalization_masks = self._allocate_prediction_maps(prediction_maps_shape,
@@ -181,7 +185,8 @@ class StandardPredictor(_AbstractPredictor):
 
         # save results
         logger.info(f'Saving predictions to: {output_file}')
-        self._save_results(prediction_maps, normalization_masks, output_heads, h5_output_file, test_loader.dataset)
+        self._save_results(prediction_maps, normalization_masks, output_heads, h5_output_file, test_loader.dataset,
+                           output_file.pdb_path)
         # close the output H5 file
         h5_output_file.close()
 
@@ -192,7 +197,45 @@ class StandardPredictor(_AbstractPredictor):
         normalization_masks = [np.zeros(output_shape, dtype='uint8') for _ in range(output_heads)]
         return prediction_maps, normalization_masks
 
-    def _save_results(self, prediction_maps, normalization_masks, output_heads, output_file, dataset):
+    @staticmethod
+    def makePdbPrediction(structure, grid, pred, expandResidues=True):
+
+        predbin = pred > 0.5
+        coords = []
+
+        for i,coord in enumerate(structure.getCoords()):
+            x,y,z = coord
+            binx = int((x - min(grid.edges[0])) / grid.delta[0])
+            biny = int((y - min(grid.edges[1])) / grid.delta[1])
+            binz = int((z - min(grid.edges[2])) / grid.delta[2])
+
+            if predbin[binx,biny,binz]:
+                coords.append(i)
+
+        if len(coords) == 0:
+            return prody.AtomGroup()
+
+        atoms = structure[coords]
+        if expandResidues:
+            idxstr = ' '.join(map(str, atoms.getIndices()))
+            return structure.select(f'same residue as index {idxstr}')
+        else:
+            return atoms
+
+    def _save_results(self, prediction_maps, normalization_masks, output_heads, output_file, dataset, output_pdb_path):
+
+        dataPaths = dataset.file_path
+
+        grid = None
+        structure = None
+        if dataPaths.pdb_path is None:
+            logger.info(f'Cannot save prediction as pdb due to missing pdb data path')
+        elif dataPaths.grid_path is None:
+            logger.info(f'Cannot save prediction as pdb due to missing grid.dx.gz file')
+        else:
+            structure = prody.parsePDB(dataPaths.pdb_path)
+            grid = PotGrid(dataPaths.pdb_path, dataPaths.grid_path)
+
         def _slice_from_pad(pad):
             if pad == 0:
                 return slice(None, None)
@@ -213,6 +256,15 @@ class StandardPredictor(_AbstractPredictor):
                 prediction_map = prediction_map[:, z_s, y_s, x_s]
 
             output_file.create_dataset(prediction_dataset, data=prediction_map, compression="gzip")
+
+            if grid is not None:
+                s = StandardPredictor.makePdbPrediction(structure, grid, prediction_map[0])
+                if len(s) == 0:
+                    open(f'{output_pdb_path}.empty', 'a').close()
+                else:
+                    prody.writePDB(output_pdb_path, s)
+
+
 
     @staticmethod
     def _validate_halo(patch_halo, slice_builder_config):

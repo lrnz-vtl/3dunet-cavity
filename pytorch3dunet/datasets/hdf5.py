@@ -16,7 +16,23 @@ from pytorch3dunet.unet3d.utils import get_logger
 logger = get_logger('HDF5Dataset')
 lock = Lock()
 
-DataPaths = namedtuple("DataPaths", "h5_path pdb_path")
+class DataPaths:
+    def __init__(self, h5_path, pdb_path=None, pocket_path=None, grid_path=None):
+        self.h5_path = h5_path
+
+        if pdb_path is not None and os.path.exists(pdb_path):
+            self.pdb_path = str(pdb_path)
+        else:
+            self.pdb_path = None
+        if pocket_path is not None and os.path.exists(pocket_path):
+            self.pocket_path = str(pocket_path)
+        else:
+            self.pocket_path = None
+        if grid_path is not None and os.path.exists(grid_path):
+            self.grid_path = str(grid_path)
+        else:
+            self.grid_path = None
+
 
 class AbstractHDF5Dataset(ConfigDataset):
     """
@@ -275,11 +291,14 @@ class AbstractHDF5Dataset(ConfigDataset):
                 for fp in chain(*iters):
                     p = Path(fp)
                     protname = p.name.split('.')[0].split('_')[0]
-                    pdbpath = None
                     pdbfname = Path(file_path) / f"{protname}_selected.pdb"
-                    if os.path.exists(pdbfname):
-                        pdbpath = str(pdbfname)
-                    results.append(DataPaths(h5_path=fp, pdb_path=pdbpath))
+                    pocketfname = Path(file_path) / f"{protname}_pocket.pdb"
+                    gridfname = Path(file_path) / f"{protname}_grid.dx.gz"
+                    results.append(DataPaths(h5_path=fp,
+                                             pdb_path=pdbfname,
+                                             pocket_path=pocketfname,
+                                             grid_path=gridfname)
+                                   )
             else:
                 results.append(file_path)
         return results
