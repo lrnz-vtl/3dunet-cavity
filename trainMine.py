@@ -9,11 +9,12 @@ checkpointname = "checkpoint"
 
 logger = get_logger('TrainingSetup')
 
-def load_config(runconfig, nworkers, device):
-    runconfig = yaml.safe_load(open(runconfig, 'r'))
+def load_config(runconfigPath, nworkers, device):
+
+    runconfig = yaml.safe_load(open(runconfigPath, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
-    runFolder = Path(runconfig['runFolder'])
+    runFolder = Path(runconfig.get('runFolder', Path(runconfigPath).parent))
 
     train_config = Path(runconfig['runFolder']) / 'train_config.yml'
 

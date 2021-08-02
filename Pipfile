@@ -16,6 +16,7 @@ jupyter = "*"
 prody = "*"
 potsim2 = {path = "./potsim2-master.zip"}
 griddataformats = {file = "https://github.com/MDAnalysis/GridDataFormats/archive/master.zip"}
+sklearn = "*"
 
 [dev-packages]
 
