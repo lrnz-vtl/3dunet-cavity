@@ -72,7 +72,6 @@ class SkipLastTargetChannelWrapper(nn.Module):
         assert target.size(1) > 1, 'Target tensor has a singleton channel dimension, cannot remove channel'
 
         # skips last target channel if needed
-        # NOTE LORENZO
         target = target[:, :-1, ...]
 
         if self.squeeze_channel:

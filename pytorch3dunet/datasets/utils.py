@@ -210,7 +210,6 @@ class FilterSliceBuilder(SliceBuilder):
         filtered_slices = list(filter(ignore_predicate, zipped_slices))
         # unzip and save slices
         assert(len(filtered_slices) > 0)
-        # NOTE LORENZO This fails if filtered slices is empty
         raw_slices, label_slices = zip(*filtered_slices)
         self._raw_slices = list(raw_slices)
         self._label_slices = list(label_slices)
@@ -300,6 +299,7 @@ def get_class(class_name, modules):
 def _loader_classes(class_name):
     modules = [
         'pytorch3dunet.datasets.hdf5',
+        'pytorch3dunet.datasets.pdb',
         'pytorch3dunet.datasets.dsb',
         'pytorch3dunet.datasets.utils'
     ]
@@ -338,10 +338,6 @@ def get_train_loaders(config):
     assert set(loaders_config['train']['file_paths']).isdisjoint(loaders_config['val']['file_paths']), \
         "Train and validation 'file_paths' overlap. One cannot use validation data for training!"
 
-    train_datasets = dataset_class.create_datasets(loaders_config, phase='train')
-
-    val_datasets = dataset_class.create_datasets(loaders_config, phase='val')
-
     num_workers = loaders_config.get('num_workers', 1)
     logger.info(f'Number of workers for train/val dataloader: {num_workers}')
     batch_size = loaders_config.get('batch_size', 1)
@@ -351,16 +347,22 @@ def get_train_loaders(config):
         batch_size = batch_size * torch.cuda.device_count()
 
     logger.info(f'Batch size for train/val loader: {batch_size}')
+
     # when training with volumetric data use batch_size of 1 due to GPU memory constraints
 
-    ret = DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True,
-                            num_workers=num_workers)
+    def train_dataloader_gen(seed):
+        train_datasets = dataset_class.create_datasets(loaders_config, phase='train')
+        return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-    pass
+    val_datasets = dataset_class.create_datasets(loaders_config, phase='val')
+    val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    def val_dataloader_gen(seed):
+        return val_Dataloader
+
     return {
-        'train': ret,
+        'train': train_dataloader_gen,
         # don't shuffle during validation: useful when showing how predictions for a given batch get better over time
-        'val': DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        'val': val_dataloader_gen
     }
 
 

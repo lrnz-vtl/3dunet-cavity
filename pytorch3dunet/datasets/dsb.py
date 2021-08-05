@@ -129,7 +129,6 @@ class DSB2018Dataset(ConfigDataset):
             img = np.asarray(imageio.imread(path))
             if expand_dims:
                 dims = img.ndim
-                # NOTE LORENZO
                 img = np.expand_dims(img, axis=0)
                 if dims == 3:
                     img = np.transpose(img, (3, 0, 1, 2))

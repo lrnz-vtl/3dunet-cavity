@@ -162,6 +162,8 @@ class UNet3DTrainer:
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
 
+        self.valLoaders = self.loaders['val'](seed=0)
+
         logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
 
@@ -241,9 +243,12 @@ class UNet3DTrainer:
                    skip_train_validation=skip_train_validation)
 
     def fit(self):
-        for _ in range(self.num_epoch, self.max_num_epochs):
+        for i in range(self.num_epoch, self.max_num_epochs):
+
+            trainLoaders = self.loaders['train'](seed=i)
+
             # train for one epoch
-            should_terminate = self.train()
+            should_terminate = self.train(trainLoaders)
 
             if should_terminate:
                 logger.info('Stopping criterion is satisfied. Finishing training')
@@ -252,7 +257,7 @@ class UNet3DTrainer:
             self.num_epoch += 1
         logger.info(f"Reached maximum number of epochs: {self.max_num_epochs}. Finishing training...")
 
-    def train(self):
+    def train(self, trainLoaders):
         """Trains the model for 1 epoch.
 
         Returns:
@@ -264,7 +269,7 @@ class UNet3DTrainer:
         # sets the model in training mode
         self.model.train()
 
-        for t in self.loaders['train']:
+        for t in trainLoaders:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
@@ -351,8 +356,11 @@ class UNet3DTrainer:
         if self.sample_plotter is not None:
             self.sample_plotter.update_current_dir()
 
+
+
         with torch.no_grad():
-            for i, t in enumerate(self.loaders['val']):
+
+            for i, t in enumerate(self.valLoaders):
                 logger.info(f'Validation iteration {i}')
 
                 input, target, weight = self._split_training_batch(t)

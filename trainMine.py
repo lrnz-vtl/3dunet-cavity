@@ -4,6 +4,7 @@ from pathlib import Path
 from pytorch3dunet.datasets.utils import get_class
 from pytorch3dunet.unet3d.utils import get_logger
 from argparse import ArgumentParser
+import os
 
 checkpointname = "checkpoint"
 
@@ -16,7 +17,7 @@ def load_config(runconfigPath, nworkers, device):
     dataFolder = Path(runconfig['dataFolder'])
     runFolder = Path(runconfig.get('runFolder', Path(runconfigPath).parent))
 
-    train_config = Path(runconfig['runFolder']) / 'train_config.yml'
+    train_config = runFolder / 'train_config.yml'
 
     config = yaml.safe_load(open(train_config, 'r'))
 
@@ -24,6 +25,11 @@ def load_config(runconfigPath, nworkers, device):
     config['loaders']['val']['file_paths'] = [str(dataFolder / name) for name in runconfig['val']]
 
     config['loaders']['num_workers'] = nworkers
+    config['loaders']['tmp_folder'] = str(runFolder / 'tmp')
+    config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
+    config['loaders']['tmpl_dir'] = runconfig.get('tmpl_dir')
+
+    os.makedirs(config['loaders']['tmp_folder'], exist_ok=True)
 
     config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)
 

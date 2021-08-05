@@ -5,9 +5,7 @@ from multiprocessing import Lock
 from pathlib import Path
 import h5py
 import numpy as np
-
-from collections import namedtuple
-
+from pytorch3dunet.datasets.pdb import DataPaths
 
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
@@ -15,23 +13,6 @@ from pytorch3dunet.unet3d.utils import get_logger
 
 logger = get_logger('HDF5Dataset')
 lock = Lock()
-
-class DataPaths:
-    def __init__(self, h5_path, pdb_path=None, pocket_path=None, grid_path=None):
-        self.h5_path = h5_path
-
-        if pdb_path is not None and os.path.exists(pdb_path):
-            self.pdb_path = str(pdb_path)
-        else:
-            self.pdb_path = None
-        if pocket_path is not None and os.path.exists(pocket_path):
-            self.pocket_path = str(pocket_path)
-        else:
-            self.pocket_path = None
-        if grid_path is not None and os.path.exists(grid_path):
-            self.grid_path = str(grid_path)
-        else:
-            self.grid_path = None
 
 
 class AbstractHDF5Dataset(ConfigDataset):
@@ -92,6 +73,9 @@ class AbstractHDF5Dataset(ConfigDataset):
             internal_paths.extend(label_internal_path)
         if weight_internal_path is not None:
             internal_paths.extend(weight_internal_path)
+
+        # For debugging
+        self.name = Path(file_path.h5_path).parent.name
 
         input_file = self.create_h5_file(file_path, internal_paths)
 
@@ -176,6 +160,8 @@ class AbstractHDF5Dataset(ConfigDataset):
         if idx >= len(self):
             raise StopIteration
 
+        logger.debug(f'Getting idx {idx} from {self.name}')
+
         # get the slice for a given index 'idx'
         raw_idx = self.raw_slices[idx]
         # get the raw data patch for a given slice
@@ -259,7 +245,6 @@ class AbstractHDF5Dataset(ConfigDataset):
                               label_internal_path=dataset_config.get('label_internal_path', 'label'),
                               weight_internal_path=dataset_config.get('weight_internal_path', None),
                               instance_ratio=instance_ratio, random_seed=random_seed)
-                # NOTE Lorenzo
                 datasets.append(dataset)
             except Exception:
                 logger.error(f'Skipping {phase} set: {file_path}', exc_info=True)

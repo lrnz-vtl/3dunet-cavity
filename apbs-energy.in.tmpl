@@ -1,0 +1,27 @@
+# https://apbs.readthedocs.io/en/latest/using/input/elec/mg-manual.html#mgmanual
+# https://www.cgl.ucsf.edu/chimera/current/docs/UsersGuide/midas/apbs.html
+read
+	mol pqr {{ name }}.pqr
+end
+elec name prot
+	mg-manual                             # Manually-configured finite differnece multigrid Poisson-Boltzmann calculations
+	mol 1                                 # mol id, not useful if only generating one grid at a time
+	dime 161 161 161                      # Grid size (161x161x161 is one of the typical sizes)
+	grid 1.0 1.0 1.0                      # Grid resolution
+	gcent mol 1                           # Center on the molecule
+	lpbe                                  # Linearized Poisson-Boltzmann equation
+	bcfl mdh                              # Initialize potential at the boundary of the coarse grid with multiple Debye-Hückel
+	ion charge 1 conc 0.100 radius 2.0    # Concentrations of positive and negative ions, need to check 
+    ion charge -1 conc 0.100 radius 2.0   
+	pdie 4.0                              # Solute (protein) dielectric constant
+	sdie 78.54                            # Solvent dielectric constant (default value)
+	sdens 10.0                            # Sphere density. Density of points used to calculate a molecular surface for mapping values (default value)
+	chgm spl2                             # cubic B-spline charge discretization
+	srfm smol                             # How to map dielectric values and ion accessibility (default)
+	srad 0.0                              # Solvent probe radius
+	swin 0.3                              # Surface spline window (not used)
+	temp 298.15                           # temperature (default)
+	calcenergy total
+	calcforce no
+	write pot gz {{ name }}_grid               # Save grid in dx.gz format
+end
