@@ -67,7 +67,7 @@ if __name__=='__main__':
     nworkers = int(args.numworkers)
 
     config = load_config(runconfig, nworkers, args.device)
-    logger.info(config)
+    logger.debug(f'Read Config is: {config}')
 
     manual_seed = config.get('manual_seed', None)
 
