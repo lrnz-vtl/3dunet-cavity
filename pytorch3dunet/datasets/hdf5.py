@@ -222,6 +222,7 @@ class AbstractHDF5Dataset(ConfigDataset):
         transformer_config = phase_config['transformer']
         # load slice builder config
         slice_builder_config = phase_config['slice_builder']
+        logger.info(f"Slice builder config: {slice_builder_config}")
         # load files to process
         file_paths = phase_config['file_paths']
         # file_paths may contain both files and directories; if the file_path is a directory all H5 files inside

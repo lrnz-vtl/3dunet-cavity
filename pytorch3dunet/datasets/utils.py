@@ -308,7 +308,6 @@ def _loader_classes(class_name):
 
 def get_slice_builder(raws, labels, weight_maps, config):
     assert 'name' in config
-    logger.info(f"Slice builder config: {config}")
     slice_builder_cls = _loader_classes(config['name'])
     return slice_builder_cls(raws, labels, weight_maps, **config)
 
