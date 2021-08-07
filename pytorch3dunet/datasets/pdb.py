@@ -1,6 +1,5 @@
-import glob
 import os
-from itertools import chain
+import sys
 from multiprocessing import Lock
 from pathlib import Path
 import h5py
@@ -11,6 +10,7 @@ from potsim2 import PotGrid
 import prody as pr
 import subprocess
 from scipy.spatial.transform import Rotation
+import gc
 
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
@@ -18,7 +18,6 @@ from pytorch3dunet.unet3d.utils import get_logger
 
 logger = get_logger('HDF5Dataset')
 lock = Lock()
-
 
 class DataPaths:
     def __init__(self, h5_path, pdb_path=None, pocket_path=None, grid_path=None):
@@ -48,7 +47,7 @@ class AbstractDataset(ConfigDataset):
     def create_datasets(cls, dataset_config, phase):
         raise NotImplementedError
 
-    def __init__(self, raws, labels, weight_maps,
+    def __init__(self, raws, labels, weight_maps, name, exe_config,
                  phase,
                  slice_builder_config,
                  transformer_config,
@@ -64,9 +63,12 @@ class AbstractDataset(ConfigDataset):
         :param a number between (0, 1]: specifies a fraction of ground truth instances to be sampled from the dense ground truth labels
         """
 
-        self.raws = raws
-        self.labels = labels
-        self.weight_maps = weight_maps
+        self.name = name
+        self.tmp_data_folder = exe_config['tmp_folder']
+
+        self.h5path = Path(self.tmp_data_folder) / self.name / f'grids.h5'
+
+        self.hasWeights = weight_maps is not None
 
         assert phase in ['train', 'val', 'test']
         if phase in ['train', 'val']:
@@ -83,7 +85,7 @@ class AbstractDataset(ConfigDataset):
 
         self.instance_ratio = instance_ratio
 
-        min_value, max_value, mean, std = self.ds_stats()
+        min_value, max_value, mean, std = self.ds_stats(raws)
 
         self.transformer = transforms.get_transformer(transformer_config, min_value=min_value, max_value=max_value,
                                                       mean=mean, std=std)
@@ -96,25 +98,22 @@ class AbstractDataset(ConfigDataset):
             if self.instance_ratio is not None:
                 assert 0 < self.instance_ratio <= 1
                 rs = np.random.RandomState(random_seed)
-                self.labels = [sample_instances(m, self.instance_ratio, rs) for m in self.labels]
+                labels = [sample_instances(m, self.instance_ratio, rs) for m in labels]
 
-            if self.weight_maps is not None:
+            if self.hasWeights:
                 self.weight_transform = self.transformer.weight_transform()
-            else:
-                self.weight_maps = None
 
-            self._check_dimensionality(self.raws, self.labels)
+            self._check_dimensionality(raws, labels)
         else:
             # 'test' phase used only for predictions so ignore the label dataset
-            self.labels = None
-            self.weight_maps = None
+            labels = None
 
             # add mirror padding if needed
             if self.mirror_padding is not None:
                 z, y, x = self.mirror_padding
                 pad_width = ((z, z), (y, y), (x, x))
                 padded_volumes = []
-                for raw in self.raws:
+                for raw in raws:
                     if raw.ndim == 4:
                         channels = [np.pad(r, pad_width=pad_width, mode='reflect') for r in raw]
                         padded_volume = np.stack(channels)
@@ -123,20 +122,28 @@ class AbstractDataset(ConfigDataset):
 
                     padded_volumes.append(padded_volume)
 
-                self.raws = padded_volumes
+                raws = padded_volumes
 
         # build slice indices for raw and label data sets
-        slice_builder = get_slice_builder(self.raws, self.labels, self.weight_maps, slice_builder_config)
+        slice_builder = get_slice_builder(raws, labels, weight_maps, slice_builder_config)
         self.raw_slices = slice_builder.raw_slices
         self.label_slices = slice_builder.label_slices
         self.weight_slices = slice_builder.weight_slices
 
+        # TODO Only cache to file for validation dataset
+        with h5py.File(self.h5path, 'w') as h5:
+            h5.create_dataset('raws', data=raws)
+            if labels is not None:
+                h5.create_dataset('labels', data=labels)
+            if weight_maps is not None:
+                h5.create_dataset('weight_maps', data=weight_maps)
+
         self.patch_count = len(self.raw_slices)
         logger.info(f'Number of patches: {self.patch_count}')
 
-    def ds_stats(self):
+    def ds_stats(self, raws):
         # calculate global min, max, mean and std for normalization
-        min_value, max_value, mean, std = calculate_stats(self.raws)
+        min_value, max_value, mean, std = calculate_stats(raws)
         logger.info(f'Input stats: min={min_value}, max={max_value}, mean={mean}, std={std}')
         return min_value, max_value, mean, std
 
@@ -147,27 +154,33 @@ class AbstractDataset(ConfigDataset):
         if idx >= len(self):
             raise StopIteration
 
-        # get the slice for a given index 'idx'
-        raw_idx = self.raw_slices[idx]
-        # get the raw data patch for a given slice
-        raw_patch_transformed = self._transform_patches(self.raws, raw_idx, self.raw_transform)
+        # TODO This is inefficient with patches
+        with h5py.File(self.h5path, 'r') as h5:
+            raws = h5['raws']
 
-        if self.phase == 'test':
-            # discard the channel dimension in the slices: predictor requires only the spatial dimensions of the volume
-            if len(raw_idx) == 4:
-                raw_idx = raw_idx[1:]
-            return raw_patch_transformed, raw_idx
-        else:
             # get the slice for a given index 'idx'
-            label_idx = self.label_slices[idx]
-            label_patch_transformed = self._transform_patches(self.labels, label_idx, self.label_transform)
-            if self.weight_maps is not None:
-                weight_idx = self.weight_slices[idx]
-                # return the transformed weight map for a given patch together with raw and label data
-                weight_patch_transformed = self._transform_patches(self.weight_maps, weight_idx, self.weight_transform)
-                return raw_patch_transformed, label_patch_transformed, weight_patch_transformed
-            # return the transformed raw and label patches
-            return raw_patch_transformed, label_patch_transformed
+            raw_idx = self.raw_slices[idx]
+            # get the raw data patch for a given slice
+            raw_patch_transformed = self._transform_patches(raws, raw_idx, self.raw_transform)
+
+            if self.phase == 'test':
+                # discard the channel dimension in the slices: predictor requires only the spatial dimensions of the volume
+                if len(raw_idx) == 4:
+                    raw_idx = raw_idx[1:]
+                return raw_patch_transformed, raw_idx
+            else:
+                labels = h5['labels']
+                # get the slice for a given index 'idx'
+                label_idx = self.label_slices[idx]
+                label_patch_transformed = self._transform_patches(labels, label_idx, self.label_transform)
+                if self.hasWeights:
+                    weight_maps = h5['weight_maps']
+                    weight_idx = self.weight_slices[idx]
+                    # return the transformed weight map for a given patch together with raw and label data
+                    weight_patch_transformed = self._transform_patches(weight_maps, weight_idx, self.weight_transform)
+                    return raw_patch_transformed, label_patch_transformed, weight_patch_transformed
+                # return the transformed raw and label patches
+                return raw_patch_transformed, label_patch_transformed
 
     @staticmethod
     def _transform_patches(datasets, label_idx, transformer):
@@ -199,8 +212,54 @@ class AbstractDataset(ConfigDataset):
 
             assert _volume_shape(raw) == _volume_shape(label), 'Raw and labels have to be of the same size'
 
+def sizeMiB(x):
+    return sys.getsizeof(x) * 9.54 * (10**-7)
 
 class StandardPDBDataset(AbstractDataset):
+
+    def __init__(self, src_data_folder, name, exe_config,
+                 phase,
+                 slice_builder_config,
+                 pregrid_transformer_config,
+                 transformer_config,
+                 mirror_padding=(16, 32, 32),
+                 instance_ratio=None,
+                 random_seed=0):
+        self.src_data_folder = src_data_folder
+        self.name = name
+        self.tmp_data_folder = exe_config['tmp_folder']
+        self.tmpl_dir = exe_config['tmpl_dir']
+        self.pdb2pqrPath = exe_config['pdb2pqrPath']
+
+        assert phase in ['train', 'val', 'test']
+
+        structure, ligand = self._processPdb()
+        # logger.info(f"structure: {sizeMiB(structure)}, ligand: {sizeMiB(ligand)}")
+
+        for elem in pregrid_transformer_config:
+            if elem['name'] == 'RandomRotate':
+                structure, ligand = self._randomRotatePdb(structure, ligand)
+
+        raws, labels = self._genGrids(structure, ligand)
+        gc.collect()
+
+        # logger.info(f"self.raws: {sizeMiB(self.raws)}, self.labels: {sizeMiB(self.labels)}")
+
+        if phase == 'test':
+            # create label/weight transform only in train/val phase
+            labels = None
+        else:
+            labels = [labels]
+        raws = [raws]
+        weight_maps = None
+
+        super().__init__(raws, labels, weight_maps, self.name, exe_config,
+                         phase,
+                         slice_builder_config,
+                         transformer_config,
+                         mirror_padding=mirror_padding,
+                         instance_ratio=instance_ratio,
+                         random_seed=random_seed)
 
     def _processPdb(self):
 
@@ -257,7 +316,6 @@ class StandardPDBDataset(AbstractDataset):
         if proc.returncode != 0:
             raise Exception(cmd_out[1].decode())
         os.chdir(owd)
-
 
     def _genGrids(self, structure, ligand):
 
@@ -317,46 +375,6 @@ class StandardPDBDataset(AbstractDataset):
         ligand2 = ligand.copy()
         ligand2.setCoords(coords_ligand)
         return structure2, ligand2
-
-    def __init__(self, src_data_folder, name, exe_config,
-                 phase,
-                 slice_builder_config,
-                 pregrid_transformer_config,
-                 transformer_config,
-                 mirror_padding=(16, 32, 32),
-                 instance_ratio=None,
-                 random_seed=0):
-        self.src_data_folder = src_data_folder
-        self.name = name
-        self.tmp_data_folder = exe_config['tmp_folder']
-        self.tmpl_dir = exe_config['tmpl_dir']
-        self.pdb2pqrPath = exe_config['pdb2pqrPath']
-
-        assert phase in ['train', 'val', 'test']
-
-        self.structure, self.ligand = self._processPdb()
-
-        for elem in pregrid_transformer_config:
-            if elem['name'] == 'RandomRotate':
-                self.structure, self.ligand = self._randomRotatePdb(self.structure, self.ligand)
-
-        self.raws, self.labels = self._genGrids(self.structure, self.ligand)
-
-        if phase == 'test':
-            # create label/weight transform only in train/val phase
-            self.labels = None
-        else:
-            self.labels = [self.labels]
-        self.raws = [self.raws]
-        self.weight_maps = None
-
-        super().__init__(self.raws, self.labels, self.weight_maps,
-                         phase,
-                         slice_builder_config,
-                         transformer_config,
-                         mirror_padding=mirror_padding,
-                         instance_ratio=instance_ratio,
-                         random_seed=random_seed)
 
     @classmethod
     def create_datasets(cls, dataset_config, phase):

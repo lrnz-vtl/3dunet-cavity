@@ -311,7 +311,7 @@ def get_slice_builder(raws, labels, weight_maps, config):
     slice_builder_cls = _loader_classes(config['name'])
     return slice_builder_cls(raws, labels, weight_maps, **config)
 
-
+#@profile
 def get_train_loaders(config):
     """
     Returns dictionary containing the training and validation loaders (torch.utils.data.DataLoader).

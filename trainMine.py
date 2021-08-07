@@ -1,3 +1,5 @@
+import sys
+
 import torch
 import yaml
 from pathlib import Path
@@ -83,6 +85,7 @@ if __name__=='__main__':
     trainer_builder = get_class(trainer_builder_class, modules=['pytorch3dunet.unet3d.trainer'])
     trainer = trainer_builder.build(config)
 
+    # sys.exit(0)
     # Start training
     trainer.fit()
 
