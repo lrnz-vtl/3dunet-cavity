@@ -67,6 +67,7 @@ class AbstractDataset(ConfigDataset):
         self.tmp_data_folder = exe_config['tmp_folder']
 
         self.h5path = Path(self.tmp_data_folder) / self.name / f'grids.h5'
+        remove(self.h5path)
 
         self.hasWeights = weight_maps is not None
 
@@ -273,7 +274,6 @@ class StandardPDBDataset(AbstractDataset):
         tmp_ligand_pdb_file = str(tmp_ligand_pdb_file)
         remove(tmp_ligand_pdb_file)
 
-
         src_mol_file = f"{self.src_data_folder}/{self.name}/{self.name}_ligand.mol2"
 
         obConversion = openbabel.OBConversion()
@@ -379,6 +379,10 @@ class StandardPDBDataset(AbstractDataset):
         coords_prot = np.einsum('ij,kj->ki', r, structure.getCoords())
         coords_ligand = np.einsum('ij,kj->ki', r, ligand.getCoords())
 
+        # Subtract center of mass
+        coords_prot = coords_prot - coords_prot.mean(axis=0)
+        coords_ligand = coords_ligand - coords_prot.mean(axis=0)
+
         structure2 = structure.copy()
         structure2.setCoords(coords_prot)
         ligand2 = ligand.copy()
@@ -410,8 +414,6 @@ class StandardPDBDataset(AbstractDataset):
         datasets = []
         for (file_path, name) in file_paths:
             try:
-                if name == "1fch":
-                    raise Exception("Test")
                 logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
                 dataset = cls(src_data_folder=file_path,
                               name=name,
