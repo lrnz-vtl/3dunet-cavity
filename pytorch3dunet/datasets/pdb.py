@@ -379,9 +379,11 @@ class StandardPDBDataset(AbstractDataset):
         coords_prot = np.einsum('ij,kj->ki', r, structure.getCoords())
         coords_ligand = np.einsum('ij,kj->ki', r, ligand.getCoords())
 
+        coords_prot_mean = coords_prot.mean(axis=0)
+
         # Subtract center of mass
-        coords_prot = coords_prot - coords_prot.mean(axis=0)
-        coords_ligand = coords_ligand - coords_prot.mean(axis=0)
+        coords_prot = coords_prot - coords_prot_mean
+        coords_ligand = coords_ligand - coords_prot_mean
 
         structure2 = structure.copy()
         structure2.setCoords(coords_prot)
