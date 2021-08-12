@@ -9,7 +9,7 @@ from pytorch3dunet.datasets.utils import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
 from pytorch3dunet.unet3d.model import get_model
-from pytorch3dunet.unet3d.utils import get_logger, get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
+from pytorch3dunet.unet3d.utils import profile, get_logger, get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
 from . import utils
 
@@ -242,6 +242,7 @@ class UNet3DTrainer:
                    sample_plotter=sample_plotter,
                    skip_train_validation=skip_train_validation)
 
+    @profile
     def fit(self):
         for i in range(self.num_epoch, self.max_num_epochs):
 
@@ -257,6 +258,7 @@ class UNet3DTrainer:
             self.num_epoch += 1
         logger.info(f"Reached maximum number of epochs: {self.max_num_epochs}. Finishing training...")
 
+    @profile
     def train(self, trainLoaders):
         """Trains the model for 1 epoch.
 
@@ -391,6 +393,7 @@ class UNet3DTrainer:
             logger.info(f'Validation finished. Loss: {val_losses.avg}. Evaluation score: {val_scores.avg}')
             return val_scores.avg
 
+    @profile
     def _split_training_batch(self, t):
         def _move_to_device(input):
             if isinstance(input, tuple) or isinstance(input, list):

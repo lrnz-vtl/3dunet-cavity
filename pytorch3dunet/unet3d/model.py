@@ -103,7 +103,6 @@ class Abstract3DUNet(nn.Module):
 
         return x
 
-
 class LogisticRegression(torch.nn.Module):
     def __init__(self, **kwargs):
         super(LogisticRegression, self).__init__()

@@ -14,7 +14,7 @@ import gc
 
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import get_logger, profile
 
 logger = get_logger('HDF5Dataset')
 lock = Lock()
@@ -224,6 +224,7 @@ def remove(fname):
 
 class StandardPDBDataset(AbstractDataset):
 
+    @profile
     def __init__(self, src_data_folder, name, exe_config,
                  phase,
                  slice_builder_config,
@@ -266,6 +267,7 @@ class StandardPDBDataset(AbstractDataset):
                          instance_ratio=instance_ratio,
                          random_seed=random_seed)
 
+    @profile
     def _processPdb(self):
 
         src_pdb_file = f'{self.src_data_folder}/{self.name}/{self.name}_protein.pdb'
@@ -300,6 +302,7 @@ class StandardPDBDataset(AbstractDataset):
 
         return complx, ligand
 
+    @profile
     def _runApbs(self, out_dir):
         owd = os.getcwd()
         os.chdir(out_dir)
@@ -323,6 +326,7 @@ class StandardPDBDataset(AbstractDataset):
             raise Exception(cmd_out[1].decode())
         os.chdir(owd)
 
+    @profile
     def _genGrids(self, structure, ligand):
 
         out_dir = f'{self.tmp_data_folder}/{self.name}'
@@ -392,6 +396,7 @@ class StandardPDBDataset(AbstractDataset):
         return structure2, ligand2
 
     @classmethod
+    @profile
     def create_datasets(cls, dataset_config, phase):
         phase_config = dataset_config[phase]
 

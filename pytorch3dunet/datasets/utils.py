@@ -3,11 +3,9 @@ import importlib
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
-
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import get_logger, profile
 
 logger = get_logger('Dataset')
-
 
 class ConfigDataset(Dataset):
     def __getitem__(self, index):
@@ -311,7 +309,7 @@ def get_slice_builder(raws, labels, weight_maps, config):
     slice_builder_cls = _loader_classes(config['name'])
     return slice_builder_cls(raws, labels, weight_maps, **config)
 
-#@profile
+@profile
 def get_train_loaders(config):
     """
     Returns dictionary containing the training and validation loaders (torch.utils.data.DataLoader).
@@ -349,6 +347,7 @@ def get_train_loaders(config):
 
     # when training with volumetric data use batch_size of 1 due to GPU memory constraints
 
+    @profile
     def train_dataloader_gen(seed):
         train_datasets = dataset_class.create_datasets(loaders_config, phase='train')
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
