@@ -353,7 +353,7 @@ def get_train_loaders(config):
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
     val_datasets = dataset_class.create_datasets(loaders_config, phase='val')
-    val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers)
     def val_dataloader_gen(seed):
         return val_Dataloader
 

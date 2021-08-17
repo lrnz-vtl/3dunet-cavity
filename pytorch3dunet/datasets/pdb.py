@@ -5,19 +5,46 @@ from pathlib import Path
 import h5py
 import numpy as np
 from openbabel import openbabel
-import jinja2
 from potsim2 import PotGrid
 import prody as pr
 import subprocess
 from scipy.spatial.transform import Rotation
-import gc
 
 import pytorch3dunet.augment.transforms as transforms
+from pytorch3dunet.augment.transforms import SampleStats
+import pytorch3dunet.augment.featurizer as featurizer
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
 from pytorch3dunet.unet3d.utils import get_logger, profile
 
 logger = get_logger('HDF5Dataset')
 lock = Lock()
+
+def apbsInput(name, dielec_const = 4.0):
+    return f"""read
+    mol pqr {name}.pqr
+end
+elec name prot
+    mg-manual
+    mol 1
+    dime 161 161 161
+    grid 1.0 1.0 1.0
+    gcent mol 1
+    lpbe
+    bcfl mdh
+    ion charge 1 conc 0.100 radius 2.0
+    ion charge -1 conc 0.100 radius 2.0
+    pdie {dielec_const}
+    sdie 78.54
+    sdens 10.0
+    chgm spl2
+    srfm smol
+    srad 0.0
+    swin 0.3
+    temp 298.15
+    calcenergy total
+    calcforce no
+    write pot gz {name}_grid
+end"""
 
 class DataPaths:
     def __init__(self, h5_path, pdb_path=None, pocket_path=None, grid_path=None):
@@ -86,10 +113,10 @@ class AbstractDataset(ConfigDataset):
 
         self.instance_ratio = instance_ratio
 
-        min_value, max_value, mean, std = self.ds_stats(raws)
+        self.stats = SampleStats(raws)
+        # min_value, max_value, mean, std = self.ds_stats(raws)
 
-        self.transformer = transforms.get_transformer(transformer_config, min_value=min_value, max_value=max_value,
-                                                      mean=mean, std=std)
+        self.transformer = transforms.get_transformer(transformer_config, stats=self.stats)
         self.raw_transform = self.transformer.raw_transform()
 
         if phase != 'test':
@@ -157,7 +184,7 @@ class AbstractDataset(ConfigDataset):
 
         # TODO This is inefficient with patches
         with h5py.File(self.h5path, 'r') as h5:
-            raws = h5['raws']
+            raws = list(h5['raws'])
 
             # get the slice for a given index 'idx'
             raw_idx = self.raw_slices[idx]
@@ -168,9 +195,9 @@ class AbstractDataset(ConfigDataset):
                 # discard the channel dimension in the slices: predictor requires only the spatial dimensions of the volume
                 if len(raw_idx) == 4:
                     raw_idx = raw_idx[1:]
-                return raw_patch_transformed, raw_idx
+                return self.name, (raw_patch_transformed, raw_idx)
             else:
-                labels = h5['labels']
+                labels = list(h5['labels'])
                 # get the slice for a given index 'idx'
                 label_idx = self.label_slices[idx]
                 label_patch_transformed = self._transform_patches(labels, label_idx, self.label_transform)
@@ -181,7 +208,7 @@ class AbstractDataset(ConfigDataset):
                     weight_patch_transformed = self._transform_patches(weight_maps, weight_idx, self.weight_transform)
                     return raw_patch_transformed, label_patch_transformed, weight_patch_transformed
                 # return the transformed raw and label patches
-                return raw_patch_transformed, label_patch_transformed
+                return self.name, (raw_patch_transformed, label_patch_transformed)
 
     @staticmethod
     def _transform_patches(datasets, label_idx, transformer):
@@ -229,6 +256,7 @@ class StandardPDBDataset(AbstractDataset):
                  phase,
                  slice_builder_config,
                  pregrid_transformer_config,
+                 features_config,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
                  instance_ratio=None,
@@ -236,7 +264,6 @@ class StandardPDBDataset(AbstractDataset):
         self.src_data_folder = src_data_folder
         self.name = name
         self.tmp_data_folder = exe_config['tmp_folder']
-        self.tmpl_dir = exe_config['tmpl_dir']
         self.pdb2pqrPath = exe_config['pdb2pqrPath']
 
         assert phase in ['train', 'val', 'test']
@@ -246,17 +273,19 @@ class StandardPDBDataset(AbstractDataset):
 
         for elem in pregrid_transformer_config:
             if elem['name'] == 'RandomRotate':
-                structure, ligand = self._randomRotatePdb(structure, ligand)
+                structure, ligand = self._randomRotatePdb(structure, ligand, self.name)
 
-        raws, labels = self._genGrids(structure, ligand)
-        gc.collect()
+        structure, grid, labels = self._genGrids(structure, ligand)
 
         if phase == 'test':
             # create label/weight transform only in train/val phase
             labels = None
         else:
             labels = [labels]
-        raws = [raws]
+
+        features = featurizer.get_featurizer(features_config).raw_transform()
+        raws = [features(structure, grid)]
+
         weight_maps = None
 
         super().__init__(raws, labels, weight_maps, self.name, exe_config,
@@ -307,15 +336,11 @@ class StandardPDBDataset(AbstractDataset):
         owd = os.getcwd()
         os.chdir(out_dir)
 
-        # creates the in file for each model so we can run APBS in model's dir
-        context = {"name": self.name}
-        tmpl_env = jinja2.Environment(loader=jinja2.FileSystemLoader(self.tmpl_dir))
-
-        str_file = tmpl_env.get_template("apbs-energy.in.tmpl").render(context)
         apbs_in_fname = "apbs-in"
+        input = apbsInput(name=self.name)
 
         with open(apbs_in_fname, "w") as f:
-            f.write(str_file)
+            f.write(input)
 
         # generates dx.gz grid file
         proc = subprocess.Popen(
@@ -369,16 +394,16 @@ class StandardPDBDataset(AbstractDataset):
         # ligand mask is a boolean NumPy array, can be converted to int: ligand_mask.astype(int)
         ligand_mask = grid.get_ligand_mask(ligand)
 
-        return grid.grid, ligand_mask
+        return structure, grid, ligand_mask
 
     @classmethod
-    def _randomRotatePdb(cls, structure, ligand):
+    def _randomRotatePdb(cls, structure, ligand, name=None):
         # Todo Init seed?
         m = Rotation.random()
         r = m.as_matrix()
 
         angles = m.as_euler('zxy')
-        logger.info(f'Random rotation matrix angles: {list(angles)}')
+        logger.info(f'Random rotation matrix angles: {list(angles)} to {name}')
 
         coords_prot = np.einsum('ij,kj->ki', r, structure.getCoords())
         coords_ligand = np.einsum('ij,kj->ki', r, ligand.getCoords())
@@ -403,6 +428,8 @@ class StandardPDBDataset(AbstractDataset):
         # load data augmentation configuration
         transformer_config = phase_config['transformer']
         pregrid_transformer_config = phase_config.get('pdb_transformer', [])
+        features_config = dataset_config.get('featurizer', [])
+
         # load slice builder config
         slice_builder_config = phase_config['slice_builder']
         logger.info(f"Slice builder config: {slice_builder_config}")
@@ -416,7 +443,7 @@ class StandardPDBDataset(AbstractDataset):
         instance_ratio = phase_config.get('instance_ratio', None)
         random_seed = phase_config.get('random_seed', 0)
 
-        exe_config = {k:dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'tmpl_dir']}
+        exe_config = {k:dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath']}
 
         datasets = []
         for (file_path, name) in file_paths:
@@ -427,8 +454,9 @@ class StandardPDBDataset(AbstractDataset):
                               exe_config=exe_config,
                               phase=phase,
                               slice_builder_config=slice_builder_config,
+                              features_config=features_config,
                               transformer_config=transformer_config,
-                              pregrid_transformer_config= pregrid_transformer_config,
+                              pregrid_transformer_config=pregrid_transformer_config,
                               mirror_padding=dataset_config.get('mirror_padding', None),
                               instance_ratio=instance_ratio,
                               random_seed=random_seed)

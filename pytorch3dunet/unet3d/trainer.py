@@ -16,7 +16,7 @@ from . import utils
 logger = get_logger('UNet3DTrainer')
 
 
-def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders):
+def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run):
     assert 'trainer' in config, 'Could not find trainer configuration'
     trainer_config = config['trainer']
 
@@ -62,6 +62,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
                              loaders=loaders,
                              tensorboard_formatter=tensorboard_formatter,
                              sample_plotter=sample_plotter,
+                             dry_run=dry_run,
                              **trainer_config)
 
 
@@ -69,6 +70,7 @@ class UNet3DTrainerBuilder:
     @staticmethod
     def build(config):
         # Create the model
+        config['model']['in_channels'] = len(config['loaders']['featurizer'])
         model = get_model(config['model'])
         # use DataParallel if more than 1 GPU available
         device = config['device']
@@ -99,7 +101,8 @@ class UNet3DTrainerBuilder:
 
         # Create model trainer
         trainer = _create_trainer(config, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler,
-                                  loss_criterion=loss_criterion, eval_criterion=eval_criterion, loaders=loaders)
+                                  loss_criterion=loss_criterion, eval_criterion=eval_criterion, loaders=loaders,
+                                  dry_run=config['dry_run'])
 
         return trainer
 
@@ -145,7 +148,8 @@ class UNet3DTrainer:
                  validate_iters=None, num_iterations=1, num_epoch=0,
                  eval_score_higher_is_better=True, best_eval_score=None,
                  tensorboard_formatter=None, sample_plotter=None,
-                 skip_train_validation=False, **kwargs):
+                 skip_train_validation=False,
+                 dry_run=False, **kwargs):
 
         self.model = model
         self.optimizer = optimizer
@@ -161,6 +165,7 @@ class UNet3DTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
+        self.dry_run = dry_run
 
         self.valLoaders = self.loaders['val'](seed=0)
 
@@ -275,8 +280,11 @@ class UNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            input, target, weight = self._split_training_batch(t)
+            name, (input, target, weight) = self._split_training_batch(t)
+            logger.info(f'Forward passing sample {name}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
 
+            if self.dry_run:
+                continue
             output, loss = self._forward_pass(input, target, weight)
 
             train_losses.update(loss.item(), self._batch_size(input))
@@ -358,14 +366,12 @@ class UNet3DTrainer:
         if self.sample_plotter is not None:
             self.sample_plotter.update_current_dir()
 
-
-
         with torch.no_grad():
 
             for i, t in enumerate(self.valLoaders):
                 logger.info(f'Validation iteration {i}')
 
-                input, target, weight = self._split_training_batch(t)
+                name, (input, target, weight) = self._split_training_batch(t)
 
                 output, loss = self._forward_pass(input, target, weight)
                 val_losses.update(loss.item(), self._batch_size(input))
@@ -395,6 +401,8 @@ class UNet3DTrainer:
 
     @profile
     def _split_training_batch(self, t):
+        name, t = t
+
         def _move_to_device(input):
             if isinstance(input, tuple) or isinstance(input, list):
                 return tuple([_move_to_device(x) for x in input])
@@ -407,7 +415,7 @@ class UNet3DTrainer:
             input, target = t
         else:
             input, target, weight = t
-        return input, target, weight
+        return name, (input, target, weight)
 
     def _forward_pass(self, input, target, weight=None):
         # forward pass

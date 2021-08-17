@@ -6,6 +6,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 from pytorch3dunet.datasets.pdb import DataPaths
+from pytorch3dunet.augment.transforms import SampleStats
 
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
@@ -81,10 +82,10 @@ class AbstractHDF5Dataset(ConfigDataset):
 
         self.raws = self.fetch_and_check(input_file, raw_internal_path)
 
-        min_value, max_value, mean, std = self.ds_stats()
+        self.stats = SampleStats(self.raws)
+        # min_value, max_value, mean, std = self.ds_stats(raws)
 
-        self.transformer = transforms.get_transformer(transformer_config, min_value=min_value, max_value=max_value,
-                                                      mean=mean, std=std)
+        self.transformer = transforms.get_transformer(transformer_config, stats=self.stats)
         self.raw_transform = self.transformer.raw_transform()
 
         if phase != 'test':
@@ -171,7 +172,7 @@ class AbstractHDF5Dataset(ConfigDataset):
             # discard the channel dimension in the slices: predictor requires only the spatial dimensions of the volume
             if len(raw_idx) == 4:
                 raw_idx = raw_idx[1:]
-            return raw_patch_transformed, raw_idx
+            return self.name, (raw_patch_transformed, raw_idx)
         else:
             # get the slice for a given index 'idx'
             label_idx = self.label_slices[idx]
@@ -182,7 +183,7 @@ class AbstractHDF5Dataset(ConfigDataset):
                 weight_patch_transformed = self._transform_patches(self.weight_maps, weight_idx, self.weight_transform)
                 return raw_patch_transformed, label_patch_transformed, weight_patch_transformed
             # return the transformed raw and label patches
-            return raw_patch_transformed, label_patch_transformed
+            return self.name, (raw_patch_transformed, label_patch_transformed)
 
     @staticmethod
     def _transform_patches(datasets, label_idx, transformer):

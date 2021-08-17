@@ -13,8 +13,12 @@ logs/
 # PyTorch models
 *.pytorch
 
+potsim2-master.zip
+
 # Python packages
 pytorch3dunet.egg-info/
 dist/
 
 runs/
+npy/
+profile/

@@ -29,7 +29,8 @@ def load_config(runconfigPath, nworkers, device):
     config['loaders']['num_workers'] = nworkers
     config['loaders']['tmp_folder'] = str(runFolder / 'tmp')
     config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
-    config['loaders']['tmpl_dir'] = runconfig.get('tmpl_dir')
+
+    config['dry_run'] = runconfig.get('dryRun', False)
 
     os.makedirs(config['loaders']['tmp_folder'], exist_ok=True)
 
