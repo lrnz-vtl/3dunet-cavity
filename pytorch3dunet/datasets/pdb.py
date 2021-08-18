@@ -19,14 +19,14 @@ from pytorch3dunet.unet3d.utils import get_logger, profile
 logger = get_logger('HDF5Dataset')
 lock = Lock()
 
-def apbsInput(name, dielec_const = 4.0):
+def apbsInput(name, dielec_const = 4.0, grid_size = 161):
     return f"""read
     mol pqr {name}.pqr
 end
 elec name prot
     mg-manual
     mol 1
-    dime 161 161 161
+    dime {grid_size} {grid_size} {grid_size}
     grid 1.0 1.0 1.0
     gcent mol 1
     lpbe
@@ -256,6 +256,7 @@ class StandardPDBDataset(AbstractDataset):
                  phase,
                  slice_builder_config,
                  pregrid_transformer_config,
+                 grid_config,
                  features_config,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
@@ -265,6 +266,8 @@ class StandardPDBDataset(AbstractDataset):
         self.name = name
         self.tmp_data_folder = exe_config['tmp_folder']
         self.pdb2pqrPath = exe_config['pdb2pqrPath']
+        self.dielec_const = grid_config.get('dielec_const', 4.0)
+        self.grid_size = grid_config.get('grid_size', 161)
 
         assert phase in ['train', 'val', 'test']
 
@@ -277,14 +280,28 @@ class StandardPDBDataset(AbstractDataset):
 
         structure, grid, labels = self._genGrids(structure, ligand)
 
+        features = featurizer.get_featurizer(features_config).raw_transform()
+        raws = features(structure, grid)
+
+        assert raws.shape[1] == labels.shape[1] and raws.shape[1] >= self.grid_size
+        if self.grid_size < raws.shape[1]:
+            logger.warn(f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {raws.shape[1]}. "
+                        f"Applying naive cropping!!!")
+            ndim = raws.ndim
+            assert ndim in [3,4]
+            if ndim == 4:
+                raws = raws[:, :self.grid_size,:self.grid_size,:self.grid_size]
+            else:
+                raws = raws[:self.grid_size,:self.grid_size,:self.grid_size]
+            labels = labels[:self.grid_size, :self.grid_size, :self.grid_size]
+
+
+        raws = [raws]
         if phase == 'test':
             # create label/weight transform only in train/val phase
             labels = None
         else:
             labels = [labels]
-
-        features = featurizer.get_featurizer(features_config).raw_transform()
-        raws = [features(structure, grid)]
 
         weight_maps = None
 
@@ -337,7 +354,7 @@ class StandardPDBDataset(AbstractDataset):
         os.chdir(out_dir)
 
         apbs_in_fname = "apbs-in"
-        input = apbsInput(name=self.name)
+        input = apbsInput(name=self.name, grid_size=self.grid_size, dielec_const=self.dielec_const)
 
         with open(apbs_in_fname, "w") as f:
             f.write(input)
@@ -430,6 +447,7 @@ class StandardPDBDataset(AbstractDataset):
         # load data augmentation configuration
         transformer_config = phase_config['transformer']
         pregrid_transformer_config = phase_config.get('pdb_transformer', [])
+        grid_config = dataset_config.get('grid_config', {})
         features_config = dataset_config.get('featurizer', [])
 
         # load slice builder config
@@ -459,6 +477,7 @@ class StandardPDBDataset(AbstractDataset):
                               features_config=features_config,
                               transformer_config=transformer_config,
                               pregrid_transformer_config=pregrid_transformer_config,
+                              grid_config=grid_config,
                               mirror_padding=dataset_config.get('mirror_padding', None),
                               instance_ratio=instance_ratio,
                               random_seed=random_seed)
