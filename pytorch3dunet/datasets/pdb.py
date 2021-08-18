@@ -295,7 +295,6 @@ class StandardPDBDataset(AbstractDataset):
                 raws = raws[:self.grid_size,:self.grid_size,:self.grid_size]
             labels = labels[:self.grid_size, :self.grid_size, :self.grid_size]
 
-
         raws = [raws]
         if phase == 'test':
             # create label/weight transform only in train/val phase

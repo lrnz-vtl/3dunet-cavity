@@ -262,7 +262,7 @@ class AdditiveGaussianNoise:
             std = self.random_state.uniform(self.scale[0], self.scale[1])
             logger.info(f"Adding gaussian noise with std = {std}")
             logger.info(f"Type before noise: {m.dtype}")
-            gaussian_noise = self.random_state.normal(0, std, size=m.shape)
+            gaussian_noise = self.random_state.normal(0, std, size=m.shape).astype(m.dtype)
             logger.info(f"Type of noise: {gaussian_noise.dtype}")
             ret = m + gaussian_noise
             logger.info(f"Type after noise: {ret.dtype}")
