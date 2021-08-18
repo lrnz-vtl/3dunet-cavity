@@ -400,6 +400,8 @@ class StandardPDBDataset(AbstractDataset):
     def _randomRotatePdb(cls, structure, ligand, name=None):
         # Todo Init seed?
         m = Rotation.random()
+        # m = Rotation.from_euler(angles=[0.29980811330064344, 0.3443362966037462, 2.2242614439106614], seq='zxy')
+
         r = m.as_matrix()
 
         angles = m.as_euler('zxy')

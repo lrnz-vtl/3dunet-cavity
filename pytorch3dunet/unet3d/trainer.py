@@ -283,6 +283,9 @@ class UNet3DTrainer:
             name, (input, target, weight) = self._split_training_batch(t)
             logger.info(f'Forward passing sample {name}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
 
+            if input.dtype != torch.float32:
+                raise ValueError("Not a float32")
+
             if self.dry_run:
                 continue
             output, loss = self._forward_pass(input, target, weight)
@@ -372,6 +375,9 @@ class UNet3DTrainer:
                 logger.info(f'Validation iteration {i}')
 
                 name, (input, target, weight) = self._split_training_batch(t)
+
+                if self.dry_run:
+                    continue
 
                 output, loss = self._forward_pass(input, target, weight)
                 val_losses.update(loss.item(), self._batch_size(input))

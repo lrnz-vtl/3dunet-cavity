@@ -1,14 +1,17 @@
 import importlib
+import logging
 
 import numpy as np
 import torch
 from scipy.ndimage import rotate, map_coordinates, gaussian_filter
 from pytorch3dunet.datasets.utils import calculate_stats
 from torchvision.transforms import Compose
+from pytorch3dunet.unet3d.utils import get_logger
 
 # WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
+logger = get_logger('Transforms')
 
 class SampleStats:
     def __init__(self, raws):
@@ -257,8 +260,13 @@ class AdditiveGaussianNoise:
     def __call__(self, m):
         if self.random_state.uniform() < self.execution_probability:
             std = self.random_state.uniform(self.scale[0], self.scale[1])
+            logger.info(f"Adding gaussian noise with std = {std}")
+            logger.info(f"Type before noise: {m.dtype}")
             gaussian_noise = self.random_state.normal(0, std, size=m.shape)
-            return m + gaussian_noise
+            logger.info(f"Type of noise: {gaussian_noise.dtype}")
+            ret = m + gaussian_noise
+            logger.info(f"Type after noise: {ret.dtype}")
+            return ret
         return m
 
 
@@ -307,13 +315,6 @@ class LabelToTensor:
     def __call__(self, m):
         m = np.array(m)
         return torch.from_numpy(m.astype(dtype='int64'))
-
-
-class ImgNormalize:
-    def __call__(self, tensor):
-        mean = torch.mean(tensor, dim=(1, 2))
-        std = torch.std(tensor, dim=(1, 2))
-        return F.normalize(tensor, mean, std)
 
 
 def get_transformer(config, stats):
