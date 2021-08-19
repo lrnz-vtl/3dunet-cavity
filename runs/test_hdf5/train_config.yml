@@ -1,0 +1,85 @@
+#trainer:
+#  max_num_epochs: 1000
+#  eval_score_higher_is_better: true
+#  max_num_iterations: 150000
+#  log_after_iters: 250
+#  resume: null
+#  validate_after_iters: 1000
+trainer:
+  max_num_epochs: 10
+  eval_score_higher_is_better: true
+  max_num_iterations: 150
+  log_after_iters: 5
+  resume: null
+  validate_after_iters: 1000
+eval_metric:
+  name: MeanIoU
+  ignore_index: null
+loaders:
+  featurizer:
+    - name: PotentialGrid
+  dataset: StandardHDF5Dataset
+  label_internal_path: /label
+  num_workers: 0
+  raw_internal_path: /raw
+  train:
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [ 80, 80, 80 ]
+      stride_shape: [ 70, 70, 70 ]
+    #    slice_builder:
+#      name: TrivialSliceBuilder
+    transformer:
+      label:
+      - name: RandomFlip
+      - name: RandomRotate90
+      - angle_spectrum: 20
+        axes: [[2, 1]]
+        mode: reflect
+        name: RandomRotate
+      - expand_dims: true
+        name: ToTensor
+      raw:
+      - name: Standardize
+      - name: RandomFlip
+      - name: RandomRotate90
+      - angle_spectrum: 20
+        axes: [[2, 1]]
+        mode: reflect
+        name: RandomRotate
+      - expand_dims: true
+        name: ToTensor
+  val:
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [ 80, 80, 80 ]
+      stride_shape: [ 70, 70, 70 ]
+#    slice_builder:
+#      name: TrivialSliceBuilder
+    transformer:
+      label:
+      - expand_dims: true
+        name: ToTensor
+      raw:
+      - name: Standardize
+      - expand_dims: true
+        name: ToTensor
+loss:
+  ignore_index: null
+  name: BCEDiceLoss
+lr_scheduler:
+  factor: 0.2
+  mode: min
+  name: ReduceLROnPlateau
+  patience: 15
+manual_seed: 0
+model:
+  f_maps: 32
+  final_sigmoid: true
+  layer_order: gcr
+  name: UNet3D
+  num_groups: 8
+  out_channels: 1
+optimizer:
+  learning_rate: 0.0002
+  weight_decay: 1.0e-05

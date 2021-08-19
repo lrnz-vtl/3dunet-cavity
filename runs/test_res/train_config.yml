@@ -1,0 +1,75 @@
+#trainer:
+#  max_num_epochs: 1000
+#  eval_score_higher_is_better: true
+#  max_num_iterations: 150000
+#  log_after_iters: 250
+#  resume: null
+#  validate_after_iters: 1000
+trainer:
+  max_num_epochs: 10
+  eval_score_higher_is_better: true
+  max_num_iterations: 150
+  log_after_iters: 5
+  resume: null
+  validate_after_iters: 1000
+eval_metric:
+  name: MeanIoU
+  ignore_index: null
+loaders:
+  dataset: StandardPDBDataset
+  grid_config:
+    grid_size: 160
+    # dielec_const: 4.0
+  featurizer:
+    - name: PotentialGrid
+  train:
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [ 64, 64, 64 ]
+      stride_shape: [ 50, 50, 50 ]
+    pdb_transformer:
+      - name: RandomRotate
+    transformer:
+      label:
+      - name: RandomFlip
+      - expand_dims: true
+        name: ToTensor
+      raw:
+      - name: Standardize
+      - name: RandomFlip
+      - expand_dims: true
+        name: ToTensor
+  val:
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [ 64, 64, 64 ]
+      stride_shape: [ 50, 50, 50 ]
+    transformer:
+      label:
+      - expand_dims: true
+        name: ToTensor
+      raw:
+      - name: Standardize
+      - expand_dims: true
+        name: ToTensor
+loss:
+  ignore_index: null
+  name: BCEDiceLoss
+lr_scheduler:
+  factor: 0.2
+  mode: min
+  name: ReduceLROnPlateau
+  patience: 15
+manual_seed: 0
+model:
+  f_maps: 32
+  is_segmentation: true
+  final_sigmoid: true
+  layer_order: cge
+  # layer_order: gcr
+  name: ResidualUNet3D
+  # num_groups: 8
+  out_channels: 1
+optimizer:
+  learning_rate: 0.0002
+  weight_decay: 1.0e-05

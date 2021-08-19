@@ -1,0 +1,11 @@
+dataFolder: /home/lorenzo/deep_apbs/destData/pdbbind_v2013_core_set_0
+test:
+- 2yfe
+train:
+- 1yc1
+- 3ao4
+useClusters: true
+val:
+- 3f3e
+- 3u9q
+- 2fvd
