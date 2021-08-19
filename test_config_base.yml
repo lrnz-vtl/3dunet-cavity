@@ -1,0 +1,15 @@
+loaders:
+  batch_size: 1
+  parallel: true
+  dataset: StandardPDBDataset
+  test:
+    slice_builder:
+      name: TrivialSliceBuilder
+    transformer:
+      raw:
+        - name: Standardize
+        - expand_dims: true
+          name: ToTensor
+predictor:
+  name: PdbPredictor
+  save_h5: false
