@@ -1,35 +1,59 @@
+trainer:
+  max_num_epochs: 1000
+  eval_score_higher_is_better: true
+  max_num_iterations: 150000
+  log_after_iters: 250
+  resume: null
+  validate_after_iters: 1000
+eval_metric:
+  name: MeanIoU
+  ignore_index: null
 loaders:
-  batch_size: 1
-  mirror_padding:
-  - 16
-  - 32
-  - 32
-  raw_internal_path: raw
-  test:
+  dataset: StandardPDBDataset
+  featurizer:
+    - name: PotentialGrid
+  train:
     slice_builder:
-      name: SliceBuilder
-      patch_shape:
-      - 64
-      - 64
-      - 64
-      stride_shape:
-      - 10
-      - 10
-      - 10
+      name: TrivialSliceBuilder
+    pdb_transformer:
+      - name: RandomRotate
     transformer:
+      label:
+      - name: RandomFlip
+      - expand_dims: true
+        name: ToTensor
+      raw:
+      - name: Standardize
+      - name: RandomFlip
+      - expand_dims: true
+        name: ToTensor
+  val:
+    slice_builder:
+      name: TrivialSliceBuilder
+    transformer:
+      label:
+      - expand_dims: true
+        name: ToTensor
       raw:
       - name: Standardize
       - expand_dims: true
         name: ToTensor
+loss:
+  ignore_index: null
+  name: BCEDiceLoss
+lr_scheduler:
+  factor: 0.2
+  mode: min
+  name: ReduceLROnPlateau
+  patience: 15
 manual_seed: 0
 model:
   f_maps: 32
   final_sigmoid: true
-  in_channels: 1
-  is_segmentation: true
   layer_order: gcr
-  name: UNet3D
   num_groups: 8
+  name: UNet3D
   out_channels: 1
-predictor:
-  name: StandardPredictor
+optimizer:
+  learning_rate: 0.0002
+  weight_decay: 1.0e-05
