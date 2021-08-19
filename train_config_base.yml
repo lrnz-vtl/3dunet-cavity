@@ -9,44 +9,29 @@ eval_metric:
   name: MeanIoU
   ignore_index: null
 loaders:
-  dataset: StandardHDF5Dataset
-  label_internal_path: /label
-  num_workers: 0
-  raw_internal_path: /raw
+  dataset: StandardPDBDataset
+  grid_config:
+    grid_size: 160
+  featurizer:
+    - name: PotentialGrid
   train:
     slice_builder:
-      name: FilterSliceBuilder
-      patch_shape: [64, 64, 64]
-      slack_acceptance: 0.01
-      stride_shape: [10, 10, 10]
-      threshold: 0.6
+      name: TrivialSliceBuilder
+    pdb_transformer:
+      - name: RandomRotate
     transformer:
       label:
       - name: RandomFlip
-      - name: RandomRotate90
-      - angle_spectrum: 20
-        axes: [[2, 1]]
-        mode: reflect
-        name: RandomRotate
       - expand_dims: true
         name: ToTensor
       raw:
       - name: Standardize
       - name: RandomFlip
-      - name: RandomRotate90
-      - angle_spectrum: 20
-        axes: [[2, 1]]
-        mode: reflect
-        name: RandomRotate
       - expand_dims: true
         name: ToTensor
   val:
     slice_builder:
-      name: FilterSliceBuilder
-      patch_shape: [64, 64, 64]
-      slack_acceptance: 0.01
-      stride_shape: [10, 10, 10]
-      threshold: 0.4
+      name: TrivialSliceBuilder
     transformer:
       label:
       - expand_dims: true
@@ -67,10 +52,9 @@ manual_seed: 0
 model:
   f_maps: 32
   final_sigmoid: true
-  in_channels: 1
   layer_order: gcr
-  name: UNet3D
   num_groups: 8
+  name: UNet3D
   out_channels: 1
 optimizer:
   learning_rate: 0.0002
