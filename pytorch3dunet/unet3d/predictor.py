@@ -18,7 +18,6 @@ OutputPaths = namedtuple("OutputPaths", "h5_path pdb_path")
 
 logger = get_logger('UNetPredictor')
 
-
 def _get_output_file(dataset, suffix='_predictions', output_dir=None):
     input_dir, file_name = os.path.split(dataset.file_path.h5_path)
     if output_dir is None:
@@ -26,7 +25,6 @@ def _get_output_file(dataset, suffix='_predictions', output_dir=None):
     output_file_h5 = os.path.join(output_dir, os.path.splitext(file_name)[0] + suffix + '.h5')
     output_file_pdb = os.path.join(output_dir, os.path.splitext(file_name.split('_')[0])[0] + suffix + '.pdb')
     return OutputPaths(h5_path=output_file_h5, pdb_path=output_file_pdb)
-
 
 def _get_dataset_names(config, number_of_datasets, prefix='predictions'):
     dataset_names = config.get('dest_dataset_name')
@@ -341,53 +339,3 @@ class LazyPredictor(StandardPredictor):
 
             logger.info(f'Deleting {normalization_dataset}...')
             del output_file[normalization_dataset]
-
-
-class DSB2018Predictor(_AbstractPredictor):
-    def __init__(self, model, output_dir, config, save_segmentation=False, pmaps_thershold=0.5, **kwargs):
-        super().__init__(model, output_dir, config, **kwargs)
-        self.pmaps_thershold = pmaps_thershold
-        self.save_segmentation = save_segmentation
-
-    def _slice_from_pad(self, pad):
-        if pad == 0:
-            return slice(None, None)
-        else:
-            return slice(pad, -pad)
-
-    def __call__(self, test_loader):
-        device = self.config['device']
-        # Sets the module in evaluation mode explicitly
-        self.model.eval()
-        self.model.testing = True
-        # Run predictions on the entire input dataset
-        with torch.no_grad():
-            for img, path in test_loader:
-                # send batch to device
-                img = img.to(device)
-                # forward pass
-                pred = self.model(img)
-                # convert to numpy array
-                for single_pred, single_path in zip(pred, path):
-                    logger.info(f'Processing {single_path}')
-                    single_pred = single_pred.cpu().numpy().squeeze()
-
-                    if hasattr(test_loader.dataset, 'mirror_padding') \
-                            and test_loader.dataset.mirror_padding is not None:
-                        z_s, y_s, x_s = [self._slice_from_pad(p) for p in test_loader.dataset.mirror_padding]
-                        single_pred = single_pred[y_s, x_s]
-
-                    # save to h5 file
-                    out_file = os.path.splitext(single_path)[0] + '_predictions.h5'
-                    if self.output_dir is not None:
-                        out_file = os.path.join(self.output_dir, os.path.split(out_file)[1])
-
-                    with h5py.File(out_file, 'w') as f:
-                        logger.info(f'Saving output to {out_file}')
-                        f.create_dataset('predictions', data=single_pred, compression='gzip')
-                        if self.save_segmentation:
-                            f.create_dataset('segmentation', data=self._pmaps_to_seg(single_pred), compression='gzip')
-
-    def _pmaps_to_seg(self, pred):
-        mask = (pred > self.pmaps_thershold).astype('uint8')
-        return measure.label(mask).astype('uint16')

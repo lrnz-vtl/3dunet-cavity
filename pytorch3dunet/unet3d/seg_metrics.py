@@ -93,8 +93,6 @@ class Accuracy:
     """
     Computes accuracy between ground truth and predicted segmentation a a given threshold value.
     Defined as: AC = TP / (TP + FP + FN).
-    Kaggle DSB2018 calls it Precision, see:
-    https://www.kaggle.com/stkbailey/step-by-step-explanation-of-scoring-metric.
     """
 
     def __init__(self, iou_threshold):

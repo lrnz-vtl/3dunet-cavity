@@ -1,5 +1,4 @@
 import importlib
-import logging
 
 import numpy as np
 import torch
@@ -12,6 +11,22 @@ from pytorch3dunet.unet3d.utils import get_logger
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 logger = get_logger('Transforms')
+
+numpy_to_torch_dtype_dict = {
+    np.bool: torch.bool,
+    np.uint8: torch.uint8,
+    np.int8: torch.int8,
+    np.int16: torch.int16,
+    np.int32: torch.int32,
+    np.int64: torch.int64,
+    np.float16: torch.float16,
+    np.float32: torch.float32,
+    np.float64: torch.float64,
+    np.complex64: torch.complex64,
+    np.complex128: torch.complex128
+}
+torch_to_numpy_dtype_dict = {y:x for x,y in numpy_to_torch_dtype_dict.items()}
+
 
 class SampleStats:
     def __init__(self, raws):
@@ -262,7 +277,11 @@ class AdditiveGaussianNoise:
             std = self.random_state.uniform(self.scale[0], self.scale[1])
             logger.info(f"Adding gaussian noise with std = {std}")
             logger.info(f"Type before noise: {m.dtype}")
-            gaussian_noise = self.random_state.normal(0, std, size=m.shape).astype(m.dtype)
+            gaussian_noise = self.random_state.normal(0, std, size=m.shape)
+            if torch.is_tensor(m):
+                gaussian_noise = torch.from_numpy(gaussian_noise.astype(torch_to_numpy_dtype_dict[m.dtype]))
+            else:
+                gaussian_noise = gaussian_noise.astype(m.dtype)
             logger.info(f"Type of noise: {gaussian_noise.dtype}")
             ret = m + gaussian_noise
             logger.info(f"Type after noise: {ret.dtype}")

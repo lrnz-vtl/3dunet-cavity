@@ -281,6 +281,7 @@ class UNet3DTrainer:
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
             name, (input, target, weight) = self._split_training_batch(t)
+            logger.info(f'Input.shape: {input.shape}. target.shape: {target.shape}')
             logger.info(f'Forward passing sample {name}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
 
             if input.dtype != torch.float32:
