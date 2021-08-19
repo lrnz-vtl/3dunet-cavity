@@ -16,10 +16,13 @@ import pytorch3dunet.augment.featurizer as featurizer
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
 from pytorch3dunet.unet3d.utils import get_logger, profile
 
+from multiprocessing import Pool, cpu_count
+
 logger = get_logger('HDF5Dataset')
 lock = Lock()
 
-def apbsInput(name, dielec_const = 4.0, grid_size = 161):
+
+def apbsInput(name, dielec_const=4.0, grid_size=161):
     return f"""read
     mol pqr {name}.pqr
 end
@@ -45,6 +48,7 @@ elec name prot
     calcforce no
     write pot gz {name}_grid
 end"""
+
 
 class DataPaths:
     def __init__(self, h5_path, pdb_path=None, pocket_path=None, grid_path=None):
@@ -240,14 +244,17 @@ class AbstractDataset(ConfigDataset):
 
             assert _volume_shape(raw) == _volume_shape(label), 'Raw and labels have to be of the same size'
 
+
 def sizeMiB(x):
-    return sys.getsizeof(x) * 9.54 * (10**-7)
+    return sys.getsizeof(x) * 9.54 * (10 ** -7)
+
 
 def remove(fname):
     try:
         os.remove(fname)
     except OSError:
         pass
+
 
 class StandardPDBDataset(AbstractDataset):
 
@@ -285,14 +292,15 @@ class StandardPDBDataset(AbstractDataset):
 
         assert raws.shape[1] == labels.shape[1] and raws.shape[1] >= self.grid_size
         if self.grid_size < raws.shape[1]:
-            logger.warn(f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {raws.shape[1]}. "
-                        f"Applying naive cropping!!!")
+            logger.warn(
+                f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {raws.shape[1]}. "
+                f"Applying naive cropping!!!")
             ndim = raws.ndim
-            assert ndim in [3,4]
+            assert ndim in [3, 4]
             if ndim == 4:
-                raws = raws[:, :self.grid_size,:self.grid_size,:self.grid_size]
+                raws = raws[:, :self.grid_size, :self.grid_size, :self.grid_size]
             else:
-                raws = raws[:self.grid_size,:self.grid_size,:self.grid_size]
+                raws = raws[:self.grid_size, :self.grid_size, :self.grid_size]
             labels = labels[:self.grid_size, :self.grid_size, :self.grid_size]
 
         raws = [raws]
@@ -439,52 +447,18 @@ class StandardPDBDataset(AbstractDataset):
         return structure2, ligand2
 
     @classmethod
-    @profile
     def create_datasets(cls, dataset_config, phase):
         phase_config = dataset_config[phase]
 
-        # load data augmentation configuration
-        transformer_config = phase_config['transformer']
-        pregrid_transformer_config = phase_config.get('pdb_transformer', [])
-        grid_config = dataset_config.get('grid_config', {})
-        features_config = dataset_config.get('featurizer', [])
-
-        # load slice builder config
-        slice_builder_config = phase_config['slice_builder']
-        logger.info(f"Slice builder config: {slice_builder_config}")
-        # load files to process
         file_paths = phase_config['file_paths']
-        # file_paths may contain both files and directories; if the file_path is a directory all H5 files inside
-        # are going to be included in the final file_paths
         file_paths = cls.traverse_pdb_paths(file_paths)
 
-        # load instance sampling configuration
-        instance_ratio = phase_config.get('instance_ratio', None)
-        random_seed = phase_config.get('random_seed', 0)
+        args = [(file_path, name, dataset_config, phase) for file_path, name in file_paths]
 
-        exe_config = {k:dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath']}
-
-        datasets = []
-        for (file_path, name) in file_paths:
-            try:
-                logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
-                dataset = cls(src_data_folder=file_path,
-                              name=name,
-                              exe_config=exe_config,
-                              phase=phase,
-                              slice_builder_config=slice_builder_config,
-                              features_config=features_config,
-                              transformer_config=transformer_config,
-                              pregrid_transformer_config=pregrid_transformer_config,
-                              grid_config=grid_config,
-                              mirror_padding=dataset_config.get('mirror_padding', None),
-                              instance_ratio=instance_ratio,
-                              random_seed=random_seed)
-                datasets.append(dataset)
-            except Exception:
-                logger.error(f'Skipping {phase} set from: {file_path} named {name}', exc_info=True)
-
-        return datasets
+        nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
+        logger.info(f'Parallelizing dataset creation among {nworkers} workers')
+        pool = Pool(processes=nworkers)
+        return [x for x in pool.map(create_dataset, args) if x is not None]
 
     @staticmethod
     def traverse_pdb_paths(file_paths):
@@ -503,3 +477,44 @@ class StandardPDBDataset(AbstractDataset):
                 results.append((file_path.parent, name))
 
         return results
+
+
+def create_dataset(arg):
+    file_path, name, dataset_config, phase = arg
+    phase_config = dataset_config[phase]
+
+    # load data augmentation configuration
+    transformer_config = phase_config['transformer']
+    pregrid_transformer_config = phase_config.get('pdb_transformer', [])
+    grid_config = dataset_config.get('grid_config', {})
+    features_config = dataset_config.get('featurizer', [])
+
+    # load slice builder config
+    slice_builder_config = phase_config['slice_builder']
+    logger.info(f"Slice builder config: {slice_builder_config}")
+    # load files to process
+
+    # load instance sampling configuration
+    instance_ratio = phase_config.get('instance_ratio', None)
+    random_seed = phase_config.get('random_seed', 0)
+
+    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath']}
+
+    try:
+        logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
+        dataset = StandardPDBDataset(src_data_folder=file_path,
+                                     name=name,
+                                     exe_config=exe_config,
+                                     phase=phase,
+                                     slice_builder_config=slice_builder_config,
+                                     features_config=features_config,
+                                     transformer_config=transformer_config,
+                                     pregrid_transformer_config=pregrid_transformer_config,
+                                     grid_config=grid_config,
+                                     mirror_padding=dataset_config.get('mirror_padding', None),
+                                     instance_ratio=instance_ratio,
+                                     random_seed=random_seed)
+        return dataset
+    except Exception:
+        logger.error(f'Skipping {phase} set from: {file_path} named {name}', exc_info=True)
+        return None
