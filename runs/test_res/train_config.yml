@@ -66,9 +66,8 @@ model:
   is_segmentation: true
   final_sigmoid: true
   layer_order: cge
-  # layer_order: gcr
   name: ResidualUNet3D
-  # num_groups: 8
+  num_groups: 8
   out_channels: 1
 optimizer:
   learning_rate: 0.0002

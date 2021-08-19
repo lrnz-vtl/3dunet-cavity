@@ -113,7 +113,6 @@ class StandardPredictor(_AbstractPredictor):
 
         logger.info(f'The shape of the output prediction maps (CDHW): {prediction_maps_shape}')
 
-
         slice_builder_config = self.config['loaders']['test']['slice_builder']
         if slice_builder_config['name'] == 'TrivialSliceBuilder':
             patch_halo = None
@@ -261,8 +260,6 @@ class StandardPredictor(_AbstractPredictor):
                     open(f'{output_pdb_path}.empty', 'a').close()
                 else:
                     prody.writePDB(output_pdb_path, s)
-
-
 
     @staticmethod
     def _validate_halo(patch_halo, slice_builder_config):

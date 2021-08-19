@@ -397,7 +397,7 @@ def get_test_loaders(config):
 
     # use generator in order to create data loaders lazily one by one
     for test_dataset in test_datasets:
-        logger.info(f'Loading test set from: {test_dataset.file_path}...')
+        logger.info(f'Loading test set from: {test_dataset.name}...')
         if hasattr(test_dataset, 'prediction_collate'):
             collate_fn = test_dataset.prediction_collate
         else:

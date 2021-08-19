@@ -9,11 +9,12 @@ from potsim2 import PotGrid
 import prody as pr
 import subprocess
 from scipy.spatial.transform import Rotation
-
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.augment.transforms import SampleStats
 import pytorch3dunet.augment.featurizer as featurizer
-from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances
+from pytorch3dunet.augment.featurizer import Grid
+from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
+    default_prediction_collate
 from pytorch3dunet.unet3d.utils import get_logger, profile
 
 from multiprocessing import Pool, cpu_count
@@ -214,6 +215,13 @@ class AbstractDataset(ConfigDataset):
                 # return the transformed raw and label patches
                 return self.name, (raw_patch_transformed, label_patch_transformed)
 
+    @classmethod
+    def prediction_collate(cls, batch):
+        names = [name for name,_ in batch]
+        assert all(x == names[0] for x in names)
+        samples = [data for _,data in batch]
+        return default_prediction_collate(samples)
+
     @staticmethod
     def _transform_patches(datasets, label_idx, transformer):
         transformed_patches = []
@@ -258,7 +266,6 @@ def remove(fname):
 
 class StandardPDBDataset(AbstractDataset):
 
-    @profile
     def __init__(self, src_data_folder, name, exe_config,
                  phase,
                  slice_builder_config,
@@ -279,29 +286,23 @@ class StandardPDBDataset(AbstractDataset):
         assert phase in ['train', 'val', 'test']
 
         structure, ligand = self._processPdb()
-        # logger.info(f"structure: {sizeMiB(structure)}, ligand: {sizeMiB(ligand)}")
 
         for elem in pregrid_transformer_config:
             if elem['name'] == 'RandomRotate':
                 structure, ligand = self._randomRotatePdb(structure, ligand, self.name)
 
-        structure, grid, labels = self._genGrids(structure, ligand)
+        pot_grid, labels = self._genGrids(structure, ligand)
+        self.structure = structure
+
+        self.grid = Grid(pot_grid, self.grid_size)
+        labels = self.grid.homologate_labels(labels)
 
         features = featurizer.get_featurizer(features_config).raw_transform()
-        raws = features(structure, grid)
+        raws = features(structure, self.grid)
+        self.grid.delGrid()
 
-        assert raws.shape[1] == labels.shape[1] and raws.shape[1] >= self.grid_size
-        if self.grid_size < raws.shape[1]:
-            logger.warn(
-                f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {raws.shape[1]}. "
-                f"Applying naive cropping!!!")
-            ndim = raws.ndim
-            assert ndim in [3, 4]
-            if ndim == 4:
-                raws = raws[:, :self.grid_size, :self.grid_size, :self.grid_size]
-            else:
-                raws = raws[:self.grid_size, :self.grid_size, :self.grid_size]
-            labels = labels[:self.grid_size, :self.grid_size, :self.grid_size]
+        self.ndim = raws.ndim
+        self.shape = raws.shape
 
         raws = [raws]
         if phase == 'test':
@@ -418,7 +419,7 @@ class StandardPDBDataset(AbstractDataset):
         # ligand mask is a boolean NumPy array, can be converted to int: ligand_mask.astype(int)
         ligand_mask = grid.get_ligand_mask(ligand)
 
-        return structure, grid, ligand_mask
+        return grid, ligand_mask
 
     @classmethod
     def _randomRotatePdb(cls, structure, ligand, name=None):
@@ -455,10 +456,13 @@ class StandardPDBDataset(AbstractDataset):
 
         args = [(file_path, name, dataset_config, phase) for file_path, name in file_paths]
 
-        nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
-        logger.info(f'Parallelizing dataset creation among {nworkers} workers')
-        pool = Pool(processes=nworkers)
-        return [x for x in pool.map(create_dataset, args) if x is not None]
+        if dataset_config.get('parallel', True):
+            nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
+            logger.info(f'Parallelizing dataset creation among {nworkers} workers')
+            pool = Pool(processes=nworkers)
+            return [x for x in pool.map(create_dataset, args) if x is not None]
+        else:
+            return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
     @staticmethod
     def traverse_pdb_paths(file_paths):

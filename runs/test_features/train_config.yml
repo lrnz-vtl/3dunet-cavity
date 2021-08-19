@@ -19,7 +19,6 @@ loaders:
   dataset: StandardPDBDataset
   num_workers: 0
   featurizer:
-    # Whether to label each grid point if it contains an atom or not
     - name: AtomLabel
     - name: PotentialGrid
   train:

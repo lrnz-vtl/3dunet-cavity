@@ -1,25 +1,53 @@
 import importlib
-
 import numpy as np
+from pytorch3dunet.unet3d.utils import get_logger
+from potsim2 import PotGrid
+
+logger = get_logger('Featurizer')
 
 # WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 
-class PotentialGrid():
+class Grid:
+    """ Custom naive grid class """
+    def __init__(self, pot_grid : PotGrid, grid_size, keep_open=False):
+        assert pot_grid.grid.shape[0] >= grid_size
+        self.orig_shape = pot_grid.grid.shape
+        self.grid_size = grid_size
+        if self.grid_size < pot_grid.grid.shape[0]:
+            logger.warn(
+                f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {pot_grid.grid.shape[0]}. "
+                f"Applying naive cropping!!!")
+
+        self.grid = pot_grid.grid[:self.grid_size, :self.grid_size, :self.grid_size]
+        self.edges = [x[:self.grid_size] for x in pot_grid.edges]
+        self.delta = pot_grid.delta
+        self.shape = self.grid.shape
+
+    def homologate_labels(self, labels):
+        assert labels.shape == self.orig_shape
+        return labels[:self.grid_size, :self.grid_size, :self.grid_size]
+
+    def delGrid(self):
+        """ Free memory """
+        del self.grid
+
+
+class PotentialGrid:
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, structure, grid):
         return grid.grid
 
-class AtomLabel():
 
+class AtomLabel:
     def __init__(self, **kwargs):
         pass
 
-    def __call__(self, structure, grid):
-        retgrid = np.zeros(shape=grid.grid.shape)
+    def __call__(self, structure, grid : Grid):
+        retgrid = np.zeros(shape=grid.shape)
 
         for i, coord in enumerate(structure.getCoords()):
             x, y, z = coord

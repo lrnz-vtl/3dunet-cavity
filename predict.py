@@ -13,26 +13,31 @@ from pathlib import Path
 logger = utils.get_logger('UNet3DPredict')
 
 checkpointname = "checkpoint"
-
 predname = 'predictions'
 
-def load_config(runconfig, nworkers, device):
-    runconfig = yaml.safe_load(open(runconfig, 'r'))
-
-    train_config = Path(runconfig['runFolder']) / 'train_config.yml'
-    test_config = Path(runconfig['runFolder']) / 'test_config.yml'
-
-    config = yaml.safe_load(open(test_config, 'r'))
-    train_config = yaml.safe_load(open(train_config, 'r'))
+def load_config(runconfigPath, nworkers, device):
+    runconfig = yaml.safe_load(open(runconfigPath, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
-    runFolder = Path(runconfig['runFolder'])
+    runFolder = Path(runconfig.get('runFolder', Path(runconfigPath).parent))
+
+    train_config = Path(runFolder) / 'train_config.yml'
+    train_config = yaml.safe_load(open(train_config, 'r'))
+
+    test_config = Path(runFolder) / 'test_config.yml'
+    config = yaml.safe_load(open(test_config, 'r'))
 
     config['loaders']['output_dir'] = str(runFolder / predname)
 
     config['loaders']['test']['file_paths'] = [str(dataFolder / name) for name in runconfig['test']]
+    config['loaders']['tmp_folder'] = str(runFolder / 'tmp_predict')
+    config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
 
     config['loaders']['num_workers'] = nworkers
+
+    for key,val in train_config['loaders'].items():
+        if key not in ['val','train'] and key not in config['loaders']:
+            config['loaders'][key] = val
 
     checkpoint_dir = runFolder / checkpointname
     config['model_path'] = str(checkpoint_dir / "best_checkpoint.pytorch")
@@ -62,8 +67,17 @@ def _get_predictor(model, output_dir, config):
     predictor_config = config.get('predictor', {})
     class_name = predictor_config.get('name', 'StandardPredictor')
 
-    m = importlib.import_module('pytorch3dunet.unet3d.predictor')
-    predictor_class = getattr(m, class_name)
+    ms = [importlib.import_module('pytorch3dunet.unet3d.predictor'),
+          importlib.import_module('pytorch3dunet.unet3d.pdb_predictor')
+          ]
+    predictor_class = None
+    for m in ms:
+        try:
+            predictor_class = getattr(m, class_name)
+        except AttributeError:
+            pass
+    if predictor_class is None:
+        raise AttributeError("predictor not found in modules")
 
     return predictor_class(model, output_dir, config, **predictor_config)
 
@@ -82,10 +96,11 @@ def main():
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
 
-    # Load configuration
     config = load_config(runconfig, nworkers, args.device)
+    logger.debug(f'Read Config is: {config}')
 
     # Create the model
+    config['model']['in_channels'] = len(config['loaders']['featurizer'])
     model = get_model(config['model'])
 
     # Load model state
