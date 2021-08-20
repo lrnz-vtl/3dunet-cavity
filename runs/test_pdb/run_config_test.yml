@@ -2,6 +2,26 @@ dataFolder: /home/lorenzo/deep_apbs/srcData/pdbbind_v2019_refined
 pdb2pqrPath: /home/lorenzo/pymol/bin/pdb2pqr
 test:
 - 2yfe
+- 4pqa
+- 3s0e
+- 1t7d
+- 4r75
+- 2dw7
+- 2fqt
+- 1dqn
+- 5gja
+- 1fiv
+- 5km9
+- 3fjg
+- 5tuz
+- 5mxf
+- 1sw2
+- 5tcj
+- 5g1z
+- 4gbd
+- 5yz2
+- 4jwk
+- 5vij
 train:
 - 4us3
 val:

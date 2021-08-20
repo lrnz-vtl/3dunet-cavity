@@ -188,7 +188,7 @@ class PdbPredictor(_AbstractPredictorPdb):
     def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset, output_pdb_path,
                       output_h5_file=None):
 
-        structure = dataset.structure
+        structure = dataset.getStructure()
         grid = dataset.grid
 
         def _slice_from_pad(pad):

@@ -1,5 +1,5 @@
 import os
-import sys
+import shutil
 from multiprocessing import Lock
 from pathlib import Path
 import h5py
@@ -16,6 +16,7 @@ from pytorch3dunet.augment.featurizer import Grid
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
     default_prediction_collate
 from pytorch3dunet.unet3d.utils import get_logger, profile
+import uuid
 
 from multiprocessing import Pool, cpu_count
 
@@ -23,9 +24,9 @@ logger = get_logger('HDF5Dataset')
 lock = Lock()
 
 
-def apbsInput(name, dielec_const=4.0, grid_size=161):
+def apbsInput(pqr_fname, grid_fname, dielec_const=4.0, grid_size=161):
     return f"""read
-    mol pqr {name}.pqr
+    mol pqr {pqr_fname}
 end
 elec name prot
     mg-manual
@@ -47,7 +48,7 @@ elec name prot
     temp 298.15
     calcenergy total
     calcforce no
-    write pot gz {name}_grid
+    write pot gz {grid_fname}
 end"""
 
 
@@ -79,7 +80,7 @@ class AbstractDataset(ConfigDataset):
     def create_datasets(cls, dataset_config, phase):
         raise NotImplementedError
 
-    def __init__(self, raws, labels, weight_maps, name, exe_config,
+    def __init__(self, raws, labels, weight_maps, name, tmp_data_folder,
                  phase,
                  slice_builder_config,
                  transformer_config,
@@ -96,10 +97,9 @@ class AbstractDataset(ConfigDataset):
         """
 
         self.name = name
-        self.tmp_data_folder = exe_config['tmp_folder']
+        self.tmp_data_folder = tmp_data_folder
 
-        self.h5path = Path(self.tmp_data_folder) / self.name / f'grids.h5'
-        remove(self.h5path)
+        self.h5path = Path(self.tmp_data_folder) / f'grids.h5'
 
         self.hasWeights = weight_maps is not None
 
@@ -253,17 +253,6 @@ class AbstractDataset(ConfigDataset):
             assert _volume_shape(raw) == _volume_shape(label), 'Raw and labels have to be of the same size'
 
 
-def sizeMiB(x):
-    return sys.getsizeof(x) * 9.54 * (10 ** -7)
-
-
-def remove(fname):
-    try:
-        os.remove(fname)
-    except OSError:
-        pass
-
-
 class StandardPDBDataset(AbstractDataset):
 
     def __init__(self, src_data_folder, name, exe_config,
@@ -278,21 +267,32 @@ class StandardPDBDataset(AbstractDataset):
                  random_seed=0):
         self.src_data_folder = src_data_folder
         self.name = name
-        self.tmp_data_folder = exe_config['tmp_folder']
+        self.cleanup = exe_config.get('cleanup', False)
+
+        uuids = uuid.uuid1()
+        self.tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
+        os.makedirs(self.tmp_data_folder)
+
         self.pdb2pqrPath = exe_config['pdb2pqrPath']
         self.dielec_const = grid_config.get('dielec_const', 4.0)
         self.grid_size = grid_config.get('grid_size', 161)
 
         assert phase in ['train', 'val', 'test']
 
-        structure, ligand = self._processPdb()
+        try:
+            structure, ligand = self._processPdb()
 
-        for elem in pregrid_transformer_config:
-            if elem['name'] == 'RandomRotate':
-                structure, ligand = self._randomRotatePdb(structure, ligand, self.name)
+            for elem in pregrid_transformer_config:
+                if elem['name'] == 'RandomRotate':
+                    structure, ligand = self._randomRotatePdb(structure, ligand, self.name)
 
-        pot_grid, labels = self._genGrids(structure, ligand)
-        self.structure = structure
+            pot_grid, labels = self._genGrids(structure, ligand)
+            # Serialise structure
+            self.structure_fname = str(Path(self.tmp_data_folder) / "structure.pdb")
+            pr.writePDB(self.structure_fname, structure)
+
+        except Exception as e:
+            raise type(e)(f"Tmp folder: {self.tmp_data_folder}") from e
 
         self.grid = Grid(pot_grid, self.grid_size)
         labels = self.grid.homologate_labels(labels)
@@ -313,24 +313,31 @@ class StandardPDBDataset(AbstractDataset):
 
         weight_maps = None
 
-        super().__init__(raws, labels, weight_maps, self.name, exe_config,
-                         phase,
-                         slice_builder_config,
-                         transformer_config,
+        super().__init__(raws, labels, weight_maps,
+                         name=self.name,
+                         tmp_data_folder=self.tmp_data_folder,
+                         phase=phase,
+                         slice_builder_config=slice_builder_config,
+                         transformer_config=transformer_config,
                          mirror_padding=mirror_padding,
                          instance_ratio=instance_ratio,
                          random_seed=random_seed)
 
-    @profile
+    def getStructure(self):
+        return pr.parsePDB(self.structure_fname)
+
+    # def __del__(self):
+    #     shutil.rmtree(self.tmp_data_folder)
+
+    def _remove(self,fname):
+        if self.cleanup:
+            os.remove(fname)
+
     def _processPdb(self):
 
         src_pdb_file = f'{self.src_data_folder}/{self.name}/{self.name}_protein.pdb'
-        tmp_ligand_pdb_file = Path(self.tmp_data_folder) / self.name / f'{self.name}_ligand.pdb'
-        os.makedirs(tmp_ligand_pdb_file.parent, exist_ok=True)
-        tmp_ligand_pdb_file = str(tmp_ligand_pdb_file)
-        remove(tmp_ligand_pdb_file)
-
         src_mol_file = f"{self.src_data_folder}/{self.name}/{self.name}_ligand.mol2"
+        tmp_ligand_pdb_file = str(Path(self.tmp_data_folder) / f'ligand.pdb')
 
         obConversion = openbabel.OBConversion()
         obConversion.SetInAndOutFormats("mol2", "pdb")
@@ -354,45 +361,16 @@ class StandardPDBDataset(AbstractDataset):
         complx = complx.select(f'same chain as exwithin 7 of resname {lresname}')
         complx = complx.select(f'protein and not resname {lresname}')
 
+        self._remove(tmp_ligand_pdb_file)
+
         return complx, ligand
 
     @profile
-    def _runApbs(self, out_dir):
-        owd = os.getcwd()
-        os.chdir(out_dir)
+    def _runApbs(self, dst_pdb_file):
+        pqr_output = f"{self.tmp_data_folder}/protein.pqr"
+        grid_fname = f"{self.tmp_data_folder}/grid.dx.gz"
 
-        apbs_in_fname = "apbs-in"
-        input = apbsInput(name=self.name, grid_size=self.grid_size, dielec_const=self.dielec_const)
-
-        with open(apbs_in_fname, "w") as f:
-            f.write(input)
-
-        # generates dx.gz grid file
-        proc = subprocess.Popen(
-            ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        cmd_out = proc.communicate()
-        if proc.returncode != 0:
-            raise Exception(cmd_out[1].decode())
-        os.chdir(owd)
-
-    @profile
-    def _genGrids(self, structure, ligand):
-
-        out_dir = f'{self.tmp_data_folder}/{self.name}'
-        dst_pdb_file = f'{out_dir}/{self.name}_protein_trans.pdb'
-        remove(dst_pdb_file)
-        pqr_output = f"{out_dir}/{self.name}.pqr"
-        remove(pqr_output)
-        grid_fname = f"{out_dir}/{self.name}_grid.dx.gz"
-        remove(grid_fname)
-
-        pr.writePDB(dst_pdb_file, structure)
-        # pdb2pqr fails to read pdbs with the one line header generated by ProDy...
-        with open(dst_pdb_file, 'r') as fin:
-            data = fin.read().splitlines(True)
-        with open(dst_pdb_file, 'w') as fout:
-            fout.writelines(data[1:])
+        logger.debug(f'Running pdb2pqr on {self.name}')
 
         proc = subprocess.Popen(
             [
@@ -411,10 +389,48 @@ class StandardPDBDataset(AbstractDataset):
             raise Exception(cmd_out[1].decode())
 
         logger.debug(f'Running apbs on {self.name}')
-        self._runApbs(out_dir)
 
-        # read grid
+        owd = os.getcwd()
+        os.chdir(self.tmp_data_folder)
+
+        apbs_in_fname = "apbs-in"
+        input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=str(Path(grid_fname).name).split('.')[0],
+                          grid_size=self.grid_size, dielec_const=self.dielec_const)
+
+        with open(apbs_in_fname, "w") as f:
+            f.write(input)
+
+        # generates dx.gz grid file
+        proc = subprocess.Popen(
+            ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        cmd_out = proc.communicate()
+        if proc.returncode != 0:
+            raise Exception(cmd_out[1].decode())
+
+        self._remove(apbs_in_fname)
+        os.chdir(owd)
+
+        self._remove(pqr_output)
+
         grid = PotGrid(dst_pdb_file, grid_fname)
+        self._remove(grid_fname)
+
+        return grid
+
+    def _genGrids(self, structure, ligand):
+
+        dst_pdb_file = f'{self.tmp_data_folder}/protein_trans.pdb'
+
+        pr.writePDB(dst_pdb_file, structure)
+        # pdb2pqr fails to read pdbs with the one line header generated by ProDy...
+        with open(dst_pdb_file, 'r') as fin:
+            data = fin.read().splitlines(True)
+        with open(dst_pdb_file, 'w') as fout:
+            fout.writelines(data[1:])
+
+        grid = self._runApbs(dst_pdb_file)
+        self._remove(dst_pdb_file)
 
         # ligand mask is a boolean NumPy array, can be converted to int: ligand_mask.astype(int)
         ligand_mask = grid.get_ligand_mask(ligand)
@@ -450,6 +466,8 @@ class StandardPDBDataset(AbstractDataset):
     @classmethod
     def create_datasets(cls, dataset_config, phase):
         phase_config = dataset_config[phase]
+
+        logger.info(f"Slice builder config: {phase_config['slice_builder']}")
 
         file_paths = phase_config['file_paths']
         file_paths = cls.traverse_pdb_paths(file_paths)
@@ -495,14 +513,12 @@ def create_dataset(arg):
 
     # load slice builder config
     slice_builder_config = phase_config['slice_builder']
-    logger.info(f"Slice builder config: {slice_builder_config}")
-    # load files to process
 
     # load instance sampling configuration
     instance_ratio = phase_config.get('instance_ratio', None)
     random_seed = phase_config.get('random_seed', 0)
 
-    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath']}
+    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup'] if k in dataset_config.keys()}
 
     try:
         logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
@@ -520,5 +536,5 @@ def create_dataset(arg):
                                      random_seed=random_seed)
         return dataset
     except Exception:
-        logger.error(f'Skipping {phase} set from: {file_path} named {name}', exc_info=True)
+        logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
         return None
