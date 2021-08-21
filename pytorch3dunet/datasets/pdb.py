@@ -1,10 +1,9 @@
 import os
 import shutil
-from multiprocessing import Lock
+from multiprocessing import Lock, Pool, cpu_count
 from pathlib import Path
 import h5py
 import numpy as np
-from openbabel import openbabel
 from potsim2 import PotGrid
 import prody as pr
 import subprocess
@@ -15,12 +14,11 @@ import pytorch3dunet.augment.featurizer as featurizer
 from pytorch3dunet.augment.featurizer import Grid
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
     default_prediction_collate
+from pytorch3dunet.datasets.utils_pdb import processPdb
 from pytorch3dunet.unet3d.utils import get_logger, profile
 import uuid
 
-from multiprocessing import Pool, cpu_count
-
-logger = get_logger('HDF5Dataset')
+logger = get_logger('PdbDataset')
 lock = Lock()
 
 
@@ -334,35 +332,9 @@ class StandardPDBDataset(AbstractDataset):
             os.remove(fname)
 
     def _processPdb(self):
-
-        src_pdb_file = f'{self.src_data_folder}/{self.name}/{self.name}_protein.pdb'
-        src_mol_file = f"{self.src_data_folder}/{self.name}/{self.name}_ligand.mol2"
         tmp_ligand_pdb_file = str(Path(self.tmp_data_folder) / f'ligand.pdb')
-
-        obConversion = openbabel.OBConversion()
-        obConversion.SetInAndOutFormats("mol2", "pdb")
-
-        # remove water molecules (found some pdb files with water molecules)
-        structure = pr.parsePDB(src_pdb_file)
-        protein = structure.select('protein').toAtomGroup()
-
-        # convert ligand to pdb
-        ligand = openbabel.OBMol()
-
-        obConversion.ReadFile(ligand, src_mol_file)
-        obConversion.WriteFile(ligand, tmp_ligand_pdb_file)
-
-        # select only chains that are close to the ligand (I love ProDy v2)
-        ligand = pr.parsePDB(tmp_ligand_pdb_file)
-        lresname = ligand.getResnames()[0]
-        complx = ligand + protein
-
-        # select ONLY atoms that belong to the protein
-        complx = complx.select(f'same chain as exwithin 7 of resname {lresname}')
-        complx = complx.select(f'protein and not resname {lresname}')
-
+        complx, ligand = processPdb(self.src_data_folder, self.name, tmp_ligand_pdb_file)
         self._remove(tmp_ligand_pdb_file)
-
         return complx, ligand
 
     @profile
