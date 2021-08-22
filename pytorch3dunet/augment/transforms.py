@@ -279,6 +279,7 @@ class AdditiveGaussianNoise:
             logger.info(f"Type before noise: {m.dtype}")
             gaussian_noise = self.random_state.normal(0, std, size=m.shape)
             if torch.is_tensor(m):
+                # TODO This is slow, should define it directly on the GPU
                 gaussian_noise = torch.from_numpy(gaussian_noise.astype(torch_to_numpy_dtype_dict[m.dtype]))
             else:
                 gaussian_noise = gaussian_noise.astype(m.dtype)
@@ -319,6 +320,7 @@ class ToTensor:
         if self.expand_dims and m.ndim == 3:
             m = np.expand_dims(m, axis=0)
 
+        # TODO Can it be avoided to define on GPU first
         return torch.from_numpy(m.astype(dtype=self.dtype))
 
 

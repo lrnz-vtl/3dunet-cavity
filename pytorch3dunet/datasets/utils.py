@@ -308,7 +308,7 @@ def get_slice_builder(raws, labels, weight_maps, config):
     slice_builder_cls = _loader_classes(config['name'])
     return slice_builder_cls(raws, labels, weight_maps, **config)
 
-@profile
+
 def get_train_loaders(config):
     """
     Returns dictionary containing the training and validation loaders (torch.utils.data.DataLoader).
@@ -343,8 +343,6 @@ def get_train_loaders(config):
         batch_size = batch_size * torch.cuda.device_count()
 
     logger.info(f'Batch size for train/val loader: {batch_size}')
-
-    # when training with volumetric data use batch_size of 1 due to GPU memory constraints
 
     @profile
     def train_dataloader_gen(seed):
