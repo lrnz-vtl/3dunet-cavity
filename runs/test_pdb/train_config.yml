@@ -11,6 +11,9 @@ eval_metric:
 loaders:
   batch_size: 2
   dataset: StandardPDBDataset
+  grid_config:
+    grid_size: 160
+    ligand_mask_radius: 4.5
   featurizer:
     - name: PotentialGrid
   train:

@@ -273,6 +273,7 @@ class StandardPDBDataset(AbstractDataset):
 
         self.pdb2pqrPath = exe_config['pdb2pqrPath']
         self.dielec_const = grid_config.get('dielec_const', 4.0)
+        self.radius = grid_config.get('ligand_mask_radius', 6.5)
         self.grid_size = grid_config.get('grid_size', 161)
 
         assert phase in ['train', 'val', 'test']
@@ -405,7 +406,7 @@ class StandardPDBDataset(AbstractDataset):
         self._remove(dst_pdb_file)
 
         # ligand mask is a boolean NumPy array, can be converted to int: ligand_mask.astype(int)
-        ligand_mask = grid.get_ligand_mask(ligand)
+        ligand_mask = grid.get_ligand_mask(ligand, self.radius)
 
         return grid, ligand_mask
 
