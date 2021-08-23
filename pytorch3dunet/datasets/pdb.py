@@ -22,7 +22,7 @@ logger = get_logger('PdbDataset')
 lock = Lock()
 
 
-def apbsInput(pqr_fname, grid_fname, dielec_const=4.0, grid_size=161):
+def apbsInput(pqr_fname, grid_fname, dielec_const, grid_size):
     return f"""read
     mol pqr {pqr_fname}
 end
@@ -180,7 +180,7 @@ class AbstractDataset(ConfigDataset):
 
     def __getitem__(self, idx):
 
-        logger.info(f'Getting idx {idx} from {self.name}')
+        logger.debug(f'Getting idx {idx} from {self.name}')
 
         if idx >= len(self):
             raise StopIteration
@@ -338,7 +338,6 @@ class StandardPDBDataset(AbstractDataset):
         self._remove(tmp_ligand_pdb_file)
         return complx, ligand
 
-    @profile
     def _runApbs(self, dst_pdb_file):
         pqr_output = f"{self.tmp_data_folder}/protein.pqr"
         grid_fname = f"{self.tmp_data_folder}/grid.dx.gz"
