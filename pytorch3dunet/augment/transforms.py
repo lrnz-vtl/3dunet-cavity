@@ -206,8 +206,8 @@ class Standardize:
                 mean, std = self.stats.mean, self.stats.std
             else:
                 assert m.ndim == 4
-                mean = np.array([self.stats.channelStats[i].mean if i else 0.0 in self.channels for i in range(m.shape[0])])
-                std = np.array([self.stats.channelStats[i].std if i else 1.0 in self.channels for i in range(m.shape[0])])
+                mean = np.array([self.stats.channelStats[i].mean if i in self.channels else 0.0 for i in range(m.shape[0])])
+                std = np.array([self.stats.channelStats[i].std if i in self.channels else 1.0 for i in range(m.shape[0])])
                 mean = mean[:,np.newaxis,np.newaxis,np.newaxis]
                 std = std[:, np.newaxis, np.newaxis, np.newaxis]
         else:
