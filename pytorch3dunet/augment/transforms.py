@@ -32,6 +32,7 @@ class SampleStats:
     def __init__(self, raws):
         ndim = raws[0].ndim
         self.min, self.max, self.mean, self.std = calculate_stats(raws)
+        logger.info(f"mean={self.mean}, std={self.std}")
         self.channelStats = None
         if ndim == 4:
             channels = raws[0].shape[0]
@@ -210,6 +211,7 @@ class Standardize:
                 std = np.array([self.stats.channelStats[i].std if i else 1.0 in self.channels for i in range(m.shape[0])])
                 mean = mean[:,np.newaxis,np.newaxis,np.newaxis]
                 std = std[:, np.newaxis, np.newaxis, np.newaxis]
+        # TODO Need to correct this path
         else:
             if self.channels is not None:
                 assert m.ndim == 4

@@ -1,7 +1,7 @@
 """
 Hacky way to generate the tmp data folder, to perform analysis later
 """
-
+import numpy as np
 import torch
 import yaml
 from pathlib import Path
@@ -67,5 +67,16 @@ if __name__=='__main__':
 
     logger.info(f'Batch size for train/val loader: {batch_size}')
 
-    datasets = PdbDataHandler.create_datasets(loaders_config, phase='train')
+    def f(raws, labels):
+        n = raws.flatten().shape[0]
+        return raws.sum()/n, (raws**2).sum()/n
+
+    results = PdbDataHandler.map_datasets(loaders_config, phase='train', f=f)
+    n = sum(1 for r in results)
+    sums = sum(r[0] for r in results)
+    sqsums = sum(r[1] for r in results)
+
+    mean = sums/n
+    std = np.sqrt((sqsums - mean**2))/n
+    print(mean, std)
     # dataLoader = DataLoader(ConcatDataset(datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)

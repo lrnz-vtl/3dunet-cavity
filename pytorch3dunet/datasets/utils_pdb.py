@@ -234,7 +234,7 @@ class PdbDataHandler:
         return grid, ligand_mask
 
     @classmethod
-    def create_datasets(cls, dataset_config, phase):
+    def map_datasets(cls, dataset_config, phase, f):
         phase_config = dataset_config[phase]
 
         file_paths = phase_config['file_paths']
@@ -246,9 +246,9 @@ class PdbDataHandler:
             nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
             logger.info(f'Parallelizing dataset creation among {nworkers} workers')
             pool = Pool(processes=nworkers)
-            return [x for x in pool.map(create_dataset, args) if x is not None]
+            return [f(*x) for x in pool.map(create_dataset, args) if x is not None]
         else:
-            return [x for x in (create_dataset(arg) for arg in args) if x is not None]
+            return [f(*x) for x in (create_dataset(arg) for arg in args) if x is not None]
 
     @staticmethod
     def traverse_pdb_paths(file_paths):
@@ -279,15 +279,19 @@ def create_dataset(arg):
     exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup'] if
                   k in dataset_config.keys()}
 
+    tmp_data_folder = str(Path(exe_config['tmp_folder']) / name)
+    os.makedirs(tmp_data_folder, exist_ok=True)
+
     try:
         logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
         dataset = PdbDataHandler(src_data_folder=file_path,
                                  name=name,
                                  pregrid_transformer_config=pregrid_transformer_config,
-                                 tmp_data_folder=exe_config['tmp_folder'],
+                                 tmp_data_folder=tmp_data_folder,
                                  pdb2pqrPath=exe_config['pdb2pqrPath'],
-                                 cleanup=exe_config['cleanup'])
-        return dataset.getRawsLabels(features_config=features_config, grid_config=grid_config)
+                                 cleanup=exe_config.get('cleanup', False))
+        raws,labels = dataset.getRawsLabels(features_config=features_config, grid_config=grid_config)
+        return raws, labels
 
     except Exception:
         logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
