@@ -10,7 +10,6 @@ from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
 from potsim2 import PotGrid
-from pytorch3dunet.datasets.pdb import AbstractDataset
 import uuid
 
 logger = get_logger('UtilsPdb')
@@ -110,12 +109,13 @@ class PdbDataHandler:
 
     def getRawsLabels(self, features_config, grid_config):
         ''' This also populates the self.grid variable '''
+        grid_size = grid_config.get('grid_size', grid_size_default)
 
         structure, ligand = self.getStructureLigand()
 
         pot_grid, labels = self._genGrids(structure, ligand, grid_config)
 
-        self.grid = Grid(pot_grid, self.grid_size)
+        self.grid = Grid(pot_grid, grid_size)
         labels = self.grid.homologate_labels(labels)
 
         features = featurizer.get_featurizer(features_config).raw_transform()
@@ -233,73 +233,9 @@ class PdbDataHandler:
 
         return grid, ligand_mask
 
-
-class StandardPDBDataset2(AbstractDataset):
-
-    def __init__(self, src_data_folder, name, exe_config,
-                 phase,
-                 slice_builder_config,
-                 pregrid_transformer_config,
-                 grid_config,
-                 features_config,
-                 transformer_config,
-                 mirror_padding=(16, 32, 32),
-                 instance_ratio=None,
-                 random_seed=0):
-
-        self.src_data_folder = src_data_folder
-        self.name = name
-
-        assert phase in ['train', 'val', 'test']
-
-        uuids = uuid.uuid1()
-        tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
-        os.makedirs(tmp_data_folder)
-
-        try:
-            self.pdbDataHandler = PdbDataHandler(src_data_folder=src_data_folder, name=name,
-                                                 predgrid_transformer_config=pregrid_transformer_config,
-                                                 tmp_data_folder=tmp_data_folder,
-                                                 pdb2pqrPath=exe_config['pdb2pqrPath'],
-                                                 cleanup=exe_config.get('cleanup', False))
-
-            raws, labels = self.pdbDataHandler.getRawsLabels(features_config=features_config, grid_config=grid_config)
-
-        except Exception as e:
-            raise type(e)(f"Tmp folder: {tmp_data_folder}") from e
-
-        self.ndim = raws.ndim
-        self.shape = raws.shape
-
-        raws = [raws]
-        if phase == 'test':
-            labels = None
-        else:
-            labels = [labels]
-        weight_maps = None
-
-        super().__init__(raws, labels, weight_maps,
-                         name=self.name,
-                         tmp_data_folder=tmp_data_folder,
-                         phase=phase,
-                         slice_builder_config=slice_builder_config,
-                         transformer_config=transformer_config,
-                         mirror_padding=mirror_padding,
-                         instance_ratio=instance_ratio,
-                         random_seed=random_seed)
-
-    def getStructure(self):
-        return self.pdbDataHandler.getStructureLigand()[0]
-
-    # def __del__(self):
-    #     shutil.rmtree(self.tmp_data_folder)
-
-
     @classmethod
     def create_datasets(cls, dataset_config, phase):
         phase_config = dataset_config[phase]
-
-        logger.info(f"Slice builder config: {phase_config['slice_builder']}")
 
         file_paths = phase_config['file_paths']
         file_paths = cls.traverse_pdb_paths(file_paths)
@@ -332,41 +268,27 @@ class StandardPDBDataset2(AbstractDataset):
 
         return results
 
-
 def create_dataset(arg):
     file_path, name, dataset_config, phase = arg
     phase_config = dataset_config[phase]
 
-    # load data augmentation configuration
-    transformer_config = phase_config['transformer']
     pregrid_transformer_config = phase_config.get('pdb_transformer', [])
     grid_config = dataset_config.get('grid_config', {})
     features_config = dataset_config.get('featurizer', [])
 
-    # load slice builder config
-    slice_builder_config = phase_config['slice_builder']
-
-    # load instance sampling configuration
-    instance_ratio = phase_config.get('instance_ratio', None)
-    random_seed = phase_config.get('random_seed', 0)
-
-    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup'] if k in dataset_config.keys()}
+    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup'] if
+                  k in dataset_config.keys()}
 
     try:
         logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
-        dataset = StandardPDBDataset2(src_data_folder=file_path,
-                                      name=name,
-                                      exe_config=exe_config,
-                                         phase=phase,
-                                         slice_builder_config=slice_builder_config,
-                                         features_config=features_config,
-                                         transformer_config=transformer_config,
-                                         pregrid_transformer_config=pregrid_transformer_config,
-                                         grid_config=grid_config,
-                                         mirror_padding=dataset_config.get('mirror_padding', None),
-                                         instance_ratio=instance_ratio,
-                                         random_seed=random_seed)
-        return dataset
+        dataset = PdbDataHandler(src_data_folder=file_path,
+                                 name=name,
+                                 pregrid_transformer_config=pregrid_transformer_config,
+                                 tmp_data_folder=exe_config['tmp_folder'],
+                                 pdb2pqrPath=exe_config['pdb2pqrPath'],
+                                 cleanup=exe_config['cleanup'])
+        return dataset.getRawsLabels(features_config=features_config, grid_config=grid_config)
+
     except Exception:
         logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
         return None

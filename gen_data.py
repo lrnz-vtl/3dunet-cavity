@@ -5,7 +5,7 @@ Hacky way to generate the tmp data folder, to perform analysis later
 import torch
 import yaml
 from pathlib import Path
-from pytorch3dunet.datasets.utils import get_class
+from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
 from pytorch3dunet.unet3d.utils import get_logger
 from argparse import ArgumentParser
 import os
@@ -58,21 +58,14 @@ if __name__=='__main__':
     config = load_config(runconfig, nworkers, args.device)
     logger.debug(f'Read Config is: {config}')
 
-    manual_seed = config.get('manual_seed', None)
+    assert 'loaders' in config, 'Could not find data loaders configuration'
+    loaders_config = config['loaders']
 
-    if manual_seed is not None:
-        logger.info(f'Seed the RNG for all devices with {manual_seed}')
-        torch.manual_seed(manual_seed)
-        # see https://pytorch.org/docs/stable/notes/randomness.html
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+    num_workers = loaders_config.get('num_workers', 1)
+    logger.info(f'Number of workers for dataloader: {num_workers}')
+    batch_size = loaders_config.get('batch_size', 1)
 
-    # create trainer
-    trainer_builder_class = 'UNet3DTrainerBuilder'
-    trainer_builder = get_class(trainer_builder_class, modules=['pytorch3dunet.unet3d.trainer'])
-    trainer = trainer_builder.build(config)
+    logger.info(f'Batch size for train/val loader: {batch_size}')
 
-    # sys.exit(0)
-    # Start training
-    trainer.fit()
-
+    datasets = PdbDataHandler.create_datasets(loaders_config, phase='train')
+    # dataLoader = DataLoader(ConcatDataset(datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
