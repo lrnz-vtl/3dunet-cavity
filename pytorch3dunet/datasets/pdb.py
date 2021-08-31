@@ -1,5 +1,4 @@
 import os
-import shutil
 from multiprocessing import Lock, Pool, cpu_count
 from pathlib import Path
 import h5py
@@ -14,7 +13,7 @@ import pytorch3dunet.augment.featurizer as featurizer
 from pytorch3dunet.augment.featurizer import Grid
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
     default_prediction_collate
-from pytorch3dunet.datasets.utils_pdb import processPdb
+from pytorch3dunet.datasets.utils_pdb import processPdb, PdbDataHandler
 from pytorch3dunet.unet3d.utils import get_logger, profile
 import uuid
 
@@ -22,7 +21,7 @@ logger = get_logger('PdbDataset')
 lock = Lock()
 
 
-def apbsInput(pqr_fname, grid_fname, dielec_const=4.0, grid_size=161):
+def apbsInput(pqr_fname, grid_fname, dielec_const, grid_size):
     return f"""read
     mol pqr {pqr_fname}
 end
@@ -180,7 +179,7 @@ class AbstractDataset(ConfigDataset):
 
     def __getitem__(self, idx):
 
-        logger.info(f'Getting idx {idx} from {self.name}')
+        logger.debug(f'Getting idx {idx} from {self.name}')
 
         if idx >= len(self):
             raise StopIteration
@@ -251,7 +250,7 @@ class AbstractDataset(ConfigDataset):
             assert _volume_shape(raw) == _volume_shape(label), 'Raw and labels have to be of the same size'
 
 
-class StandardPDBDataset(AbstractDataset):
+class StandardPDBDatasetOld(AbstractDataset):
 
     def __init__(self, src_data_folder, name, exe_config,
                  phase,
@@ -338,7 +337,6 @@ class StandardPDBDataset(AbstractDataset):
         self._remove(tmp_ligand_pdb_file)
         return complx, ligand
 
-    @profile
     def _runApbs(self, dst_pdb_file):
         pqr_output = f"{self.tmp_data_folder}/protein.pqr"
         grid_fname = f"{self.tmp_data_folder}/grid.dx.gz"
@@ -474,6 +472,83 @@ class StandardPDBDataset(AbstractDataset):
         return results
 
 
+class StandardPDBDataset(AbstractDataset):
+
+    def __init__(self, src_data_folder, name, exe_config,
+                 phase,
+                 slice_builder_config,
+                 pregrid_transformer_config,
+                 grid_config,
+                 features_config,
+                 transformer_config,
+                 mirror_padding=(16, 32, 32),
+                 instance_ratio=None,
+                 random_seed=0):
+
+        self.src_data_folder = src_data_folder
+        self.name = name
+
+        assert phase in ['train', 'val', 'test']
+
+        uuids = uuid.uuid1()
+        tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
+        os.makedirs(tmp_data_folder)
+
+        try:
+            self.pdbDataHandler = PdbDataHandler(src_data_folder=src_data_folder, name=name,
+                                                 pregrid_transformer_config=pregrid_transformer_config,
+                                                 tmp_data_folder=tmp_data_folder,
+                                                 pdb2pqrPath=exe_config['pdb2pqrPath'],
+                                                 cleanup=exe_config.get('cleanup', False))
+
+            raws, labels = self.pdbDataHandler.getRawsLabels(features_config=features_config, grid_config=grid_config)
+
+        except Exception as e:
+            raise type(e)(f"Tmp folder: {tmp_data_folder}") from e
+
+        self.ndim = raws.ndim
+        self.shape = raws.shape
+
+        raws = [raws]
+        if phase == 'test':
+            labels = None
+        else:
+            labels = [labels]
+        weight_maps = None
+
+        super().__init__(raws, labels, weight_maps,
+                         name=self.name,
+                         tmp_data_folder=tmp_data_folder,
+                         phase=phase,
+                         slice_builder_config=slice_builder_config,
+                         transformer_config=transformer_config,
+                         mirror_padding=mirror_padding,
+                         instance_ratio=instance_ratio,
+                         random_seed=random_seed)
+
+    def getStructure(self):
+        return self.pdbDataHandler.getStructureLigand()[0]
+
+    @classmethod
+    def create_datasets(cls, dataset_config, phase):
+        phase_config = dataset_config[phase]
+
+        logger.info(f"Slice builder config: {phase_config['slice_builder']}")
+
+        file_paths = phase_config['file_paths']
+        file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
+
+        args = [(file_path, name, dataset_config, phase) for file_path, name in file_paths]
+
+        if dataset_config.get('parallel', True):
+            nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
+            logger.info(f'Parallelizing dataset creation among {nworkers} workers')
+            pool = Pool(processes=nworkers)
+            return [x for x in pool.map(create_dataset, args) if x is not None]
+        else:
+            return [x for x in (create_dataset(arg) for arg in args) if x is not None]
+
+
 def create_dataset(arg):
     file_path, name, dataset_config, phase = arg
     phase_config = dataset_config[phase]
@@ -511,3 +586,5 @@ def create_dataset(arg):
     except Exception:
         logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
         return None
+
+

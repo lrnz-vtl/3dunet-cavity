@@ -32,6 +32,7 @@ class SampleStats:
     def __init__(self, raws):
         ndim = raws[0].ndim
         self.min, self.max, self.mean, self.std = calculate_stats(raws)
+        logger.info(f"mean={self.mean}, std={self.std}")
         self.channelStats = None
         if ndim == 4:
             channels = raws[0].shape[0]
@@ -191,41 +192,39 @@ class Standardize:
     Apply Z-score normalization to a given input tensor, i.e. re-scaling the values to be 0-mean and 1-std.
     """
 
-    def __init__(self, eps=1e-10, stats : SampleStats = None, channels=None, **kwargs):
+    def __init__(self, stats : SampleStats, eps=1e-10, channels=None,  **kwargs):
         """ If channels is None average across all channel. Otherwise channel-wise separately to each channel in channels
         """
-        assert stats is None or channels is None or (stats.channelStats is not None)
+        assert stats is not None
         self.stats = stats
-        self.channels = channels
+        if channels is None:
+            self.instructions = None
+        else:
+            self.instructions = {c['axis']: c for c in channels}
         self.eps = eps
 
     def __call__(self, m):
 
-        if self.stats is not None:
-            if self.channels is None:
-                mean, std = self.stats.mean, self.stats.std
-            else:
-                assert m.ndim == 4
-                mean = np.array([self.stats.channelStats[i].mean if i in self.channels else 0.0 for i in range(m.shape[0])])
-                std = np.array([self.stats.channelStats[i].std if i in self.channels else 1.0 for i in range(m.shape[0])])
-                mean = mean[:,np.newaxis,np.newaxis,np.newaxis]
-                std = std[:, np.newaxis, np.newaxis, np.newaxis]
+        if self.instructions is None:
+            mean, std = self.stats.mean, self.stats.std
         else:
-            if self.channels is not None:
-                assert m.ndim == 4
-                # normalize per-channel
-                axes = list(range(m.ndim))
-                # average across channels
-                axes = tuple(axes[1:])
-                mean = np.mean(m, axis=axes, keepdims=True)
-                std = np.std(m, axis=axes, keepdims=True)
-                for i in range(m.shape[0]):
-                    if i not in self.channels:
-                        mean[i] = 0
-                        std[i] = 1
-            else:
-                mean = np.mean(m)
-                std = np.std(m)
+            assert m.ndim == 4
+            mean = np.zeros(m.shape[0])
+            std = np.zeros(m.shape[0])
+            for i in range(m.shape[0]):
+                if i in self.instructions.keys():
+                    if 'stats' in self.instructions[i].keys():
+                        mean[i] = float(self.instructions[i]['stats']['mean'])
+                        std[i] = float(self.instructions[i]['stats']['std'])
+                    else:
+                        mean[i] = self.stats.channelStats[i].mean
+                        std[i] = self.stats.channelStats[i].std
+                else:
+                    mean[i] = 0
+                    std[i] = 1
+
+            mean = mean[:,np.newaxis,np.newaxis,np.newaxis]
+            std = std[:, np.newaxis, np.newaxis, np.newaxis]
 
         return (m - mean) / np.clip(std, a_min=self.eps, a_max=None)
 

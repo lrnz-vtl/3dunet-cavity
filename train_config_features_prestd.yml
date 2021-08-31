@@ -1,25 +1,22 @@
 trainer:
-  max_num_epochs: 10
+  max_num_epochs: 1000
   eval_score_higher_is_better: true
-  max_num_iterations: 150
-  log_after_iters: 5
+  max_num_iterations: 150000
+  log_after_iters: 250
   resume: null
   validate_after_iters: 1000
 eval_metric:
   name: MeanIoU
   ignore_index: null
 loaders:
-  batch_size: 1
   dataset: StandardPDBDataset
-  grid_config:
-    grid_size: 160
+  num_workers: 0
   featurizer:
+    - name: AtomLabel
     - name: PotentialGrid
   train:
     slice_builder:
-      name: SliceBuilder
-      patch_shape: [ 70, 70, 70 ]
-      stride_shape: [ 50, 50, 50 ]
+      name: TrivialSliceBuilder
     pdb_transformer:
       - name: RandomRotate
     transformer:
@@ -29,20 +26,31 @@ loaders:
         name: ToTensor
       raw:
       - name: Standardize
+        # If this is not supplied, local stats for each image will be computed across all channels
+        channels:
+          # If a certain axis is present, that will be standardized, otherwise not
+          - axis: 1
+            # Global stats. If not supplied, local stats for each image will be used
+            stats:
+              mean: 0.10963263717159216
+              std: 0.5725709752031986
       - name: RandomFlip
       - expand_dims: true
         name: ToTensor
   val:
     slice_builder:
-      name: SliceBuilder
-      patch_shape: [ 70, 70, 70 ]
-      stride_shape: [ 50, 50, 50 ]
+      name: TrivialSliceBuilder
     transformer:
       label:
       - expand_dims: true
         name: ToTensor
       raw:
       - name: Standardize
+        channels:
+          - axis : 1
+            stats:
+              mean: 0.10963263717159216
+              std: 0.5725709752031986
       - expand_dims: true
         name: ToTensor
 loss:
@@ -58,8 +66,8 @@ model:
   f_maps: 32
   final_sigmoid: true
   layer_order: gcr
-  name: UNet3D
   num_groups: 8
+  name: UNet3D
   out_channels: 1
 optimizer:
   learning_rate: 0.0002
