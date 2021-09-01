@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
 from potsim2 import PotGrid
-import uuid
+import typing
 
 logger = get_logger('UtilsPdb')
 
@@ -90,7 +90,7 @@ class PdbDataHandler:
         self.tmp_data_folder = tmp_data_folder
         self.pdb2pqrPath = pdb2pqrPath
         self.cleanup = cleanup
-        self.grid = None
+        self.grids = None
 
         structure, ligand = self._processPdb()
 
@@ -113,14 +113,16 @@ class PdbDataHandler:
 
         structure, ligand = self.getStructureLigand()
 
-        pot_grid, labels = self._genGrids(structure, ligand, grid_config)
+        dielec_const_list = [x.get('dielec_const',dielec_const_default) for x in features_config if x['name']=='PotentialGrid']
+        pot_grids, labels = self._genGrids(structure, ligand, grid_config, dielec_const_list)
 
-        self.grid = Grid(pot_grid, grid_size)
-        labels = self.grid.homologate_labels(labels)
+        self.grids = {dielec_const: Grid(pot_grid, grid_size) for dielec_const, pot_grid in pot_grids.items()}
+        labels = next(iter(self.grids.values())).homologate_labels(labels)
 
         features = featurizer.get_featurizer(features_config).raw_transform()
-        raws = features(structure, self.grid)
-        self.grid.delGrid()
+        raws = features(structure, self.grids)
+        for grid in self.grids.values():
+            grid.delGrid()
         return raws, labels
 
     def _randomRotatePdb(self, structure, ligand):
@@ -158,9 +160,8 @@ class PdbDataHandler:
         self._remove(tmp_ligand_pdb_file)
         return complx, ligand
 
-    def _runApbs(self, dst_pdb_file, grid_size, dielec_const):
+    def _runApbs(self, dst_pdb_file, grid_size, dielec_const_list) -> typing.Dict[float, PotGrid]:
         pqr_output = f"{self.tmp_data_folder}/protein.pqr"
-        grid_fname = f"{self.tmp_data_folder}/grid.dx.gz"
 
         logger.debug(f'Running pdb2pqr on {self.name}')
 
@@ -180,13 +181,22 @@ class PdbDataHandler:
         if proc.returncode != 0:
             raise Exception(cmd_out[1].decode())
 
-        logger.debug(f'Running apbs on {self.name}')
+        grids = {dielec_const: self._runApbsSingle(pqr_output, dst_pdb_file, grid_size, dielec_const) for dielec_const in dielec_const_list}
+
+        self._remove(pqr_output)
+        return grids
+
+    def _runApbsSingle(self, pqr_output, dst_pdb_file, grid_size, dielec_const) -> PotGrid:
+        grid_fname = f"{self.tmp_data_folder}/grid_{dielec_const}.dx.gz"
+
+        logger.debug(f'Running apbs on {self.name} with dielec_const = {dielec_const}')
 
         owd = os.getcwd()
         os.chdir(self.tmp_data_folder)
 
         apbs_in_fname = "apbs-in"
-        input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=str(Path(grid_fname).name).split('.')[0],
+        grid_fname_in = '.'.join(str(Path(grid_fname).name).split('.')[:-2])
+        input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=grid_fname_in,
                           grid_size=grid_size, dielec_const=dielec_const)
 
         with open(apbs_in_fname, "w") as f:
@@ -203,16 +213,12 @@ class PdbDataHandler:
         self._remove(apbs_in_fname)
         os.chdir(owd)
 
-        self._remove(pqr_output)
-
         grid = PotGrid(dst_pdb_file, grid_fname)
         self._remove(grid_fname)
 
         return grid
 
-    def _genGrids(self, structure, ligand, grid_config):
-
-        dielec_const = grid_config.get('dielec_const', dielec_const_default)
+    def _genGrids(self, structure, ligand, grid_config, dielec_const_list) -> (typing.Dict[float, PotGrid], typing.Any):
         radius = grid_config.get('ligand_mask_radius', ligand_mask_radius_defaults)
         grid_size = grid_config.get('grid_size', grid_size_default)
 
@@ -225,13 +231,13 @@ class PdbDataHandler:
         with open(dst_pdb_file, 'w') as fout:
             fout.writelines(data[1:])
 
-        grid = self._runApbs(dst_pdb_file, grid_size=grid_size, dielec_const=dielec_const)
+        grids = self._runApbs(dst_pdb_file=dst_pdb_file, grid_size=grid_size, dielec_const_list=dielec_const_list)
         self._remove(dst_pdb_file)
 
         # ligand mask is a boolean NumPy array, can be converted to int: ligand_mask.astype(int)
-        ligand_mask = grid.get_ligand_mask(ligand, radius)
+        ligand_mask = next(iter(grids.values())).get_ligand_mask(ligand, radius)
 
-        return grid, ligand_mask
+        return grids, ligand_mask
 
     @classmethod
     def map_datasets(cls, dataset_config, phase, f):

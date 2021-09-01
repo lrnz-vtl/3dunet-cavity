@@ -2,6 +2,7 @@ import importlib
 import numpy as np
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
+import typing
 
 logger = get_logger('Featurizer')
 
@@ -36,17 +37,17 @@ class Grid:
 
 class PotentialGrid:
     def __init__(self, **kwargs):
-        pass
+        self.dielec_const = kwargs['dielec_const']
 
-    def __call__(self, structure, grid):
-        return grid.grid
-
+    def __call__(self, structure, grids):
+        return grids[self.dielec_const].grid
 
 class AtomLabel:
     def __init__(self, **kwargs):
         pass
 
-    def __call__(self, structure, grid : Grid):
+    def __call__(self, structure, grids : typing.Dict[float, Grid]):
+        grid = next(iter(grids.values()))
         retgrid = np.zeros(shape=grid.shape)
 
         for i, coord in enumerate(structure.getCoords()):
