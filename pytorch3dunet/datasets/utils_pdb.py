@@ -111,15 +111,22 @@ class PdbDataHandler:
         ''' This also populates the self.grid variable '''
         grid_size = grid_config.get('grid_size', grid_size_default)
 
+        features_config2 = []
+        for x in features_config:
+            y = dict(x)
+            if x['name'] == 'PotentialGrid' and 'dielec_const' not in x:
+                y['dielec_const'] = dielec_const_default
+            features_config2.append(y)
+
         structure, ligand = self.getStructureLigand()
 
-        dielec_const_list = [x.get('dielec_const',dielec_const_default) for x in features_config if x['name']=='PotentialGrid']
+        dielec_const_list = [x['dielec_const'] for x in features_config2 if x['name']=='PotentialGrid']
         pot_grids, labels = self._genGrids(structure, ligand, grid_config, dielec_const_list)
 
         self.grids = {dielec_const: Grid(pot_grid, grid_size) for dielec_const, pot_grid in pot_grids.items()}
         labels = next(iter(self.grids.values())).homologate_labels(labels)
 
-        features = featurizer.get_featurizer(features_config).raw_transform()
+        features = featurizer.get_featurizer(features_config2).raw_transform()
         raws = features(structure, self.grids)
         for grid in self.grids.values():
             grid.delGrid()
