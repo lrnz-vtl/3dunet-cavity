@@ -1,5 +1,6 @@
 pdb2pqrPath: pdb2pqr
 dataFolder: /hps/nobackup/arl/chembl/lorenzo/deep_apbs/srcData/refined-set
+reuse_grids: true
 test:
 - 3s0e
 - 1t7d

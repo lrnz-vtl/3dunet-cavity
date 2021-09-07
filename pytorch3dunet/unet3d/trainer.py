@@ -9,7 +9,8 @@ from pytorch3dunet.datasets.utils import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
 from pytorch3dunet.unet3d.model import get_model
-from pytorch3dunet.unet3d.utils import profile, get_logger, get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
+from pytorch3dunet.unet3d.utils import profile, get_logger, \
+    get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
 from . import utils
 
@@ -250,7 +251,7 @@ class UNet3DTrainer:
     @profile
     def fit(self):
         for i in range(self.num_epoch, self.max_num_epochs):
-
+            logger.info(f'Entering training epoch {i}')
             trainLoaders = self.loaders['train'](seed=i)
 
             # train for one epoch
@@ -280,12 +281,12 @@ class UNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            name, (input, target, weight) = self._split_training_batch(t)
+            names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
             logger.debug(f'Input.shape: {input.shape}. target.shape: {target.shape}')
-            logger.debug(f'Forward passing sample {name}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
-
-            if input.dtype != torch.float32:
-                raise ValueError("Not a float32")
+            # logger.debug(f'Forward passing samples {names}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
+            #
+            # if input.dtype != torch.float32:
+            #     raise ValueError("Not a float32")
 
             if self.dry_run:
                 continue
@@ -375,7 +376,7 @@ class UNet3DTrainer:
             for i, t in enumerate(self.valLoaders):
                 logger.info(f'Validation iteration {i}')
 
-                name, (input, target, weight) = self._split_training_batch(t)
+                names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
 
                 if self.dry_run:
                     continue
@@ -391,7 +392,6 @@ class UNet3DTrainer:
                 if i % 100 == 0:
                     self._log_images(input, target, output, 'val_')
 
-                # mmin,mmax = output.min(), output.max()
                 eval_score = self.eval_criterion(output, target)
                 val_scores.update(eval_score.item(), self._batch_size(input))
 
@@ -408,7 +408,7 @@ class UNet3DTrainer:
 
     @profile
     def _split_training_batch(self, t):
-        name, t = t
+        names, pdbObjs, t = t
 
         def _move_to_device(input):
             if isinstance(input, tuple) or isinstance(input, list):
@@ -422,7 +422,7 @@ class UNet3DTrainer:
             input, target = t
         else:
             input, target, weight = t
-        return name, (input, target, weight)
+        return names, pdbObjs, (input, target, weight)
 
     def _forward_pass(self, input, target, weight=None):
         # forward pass

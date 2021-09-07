@@ -160,36 +160,11 @@ class PdbPredictor(_AbstractPredictorPdb):
         normalization_masks = [np.zeros(output_shape, dtype='uint8') for _ in range(output_heads)]
         return prediction_maps, normalization_masks
 
-    @staticmethod
-    def makePdbPrediction(structure, grid : Grid, pred, expandResidues=True):
 
-        predbin = pred > 0.5
-        coords = []
-
-        for i, coord in enumerate(structure.getCoords()):
-            x, y, z = coord
-            binx = int((x - min(grid.edges[0])) / grid.delta[0])
-            biny = int((y - min(grid.edges[1])) / grid.delta[1])
-            binz = int((z - min(grid.edges[2])) / grid.delta[2])
-
-            if predbin[binx, biny, binz]:
-                coords.append(i)
-
-        if len(coords) == 0:
-            return prody.AtomGroup()
-
-        atoms = structure[coords]
-        if expandResidues:
-            idxstr = ' '.join(map(str, atoms.getIndices()))
-            return structure.select(f'same residue as index {idxstr}')
-        else:
-            return atoms
-
-    def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset, output_pdb_path,
+    def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset : StandardPDBDataset, output_pdb_path,
                       output_h5_file=None):
 
-        structure = dataset.getStructure()
-        grid = dataset.grid
+        pdbData = dataset.pdbDataHandler
 
         def _slice_from_pad(pad):
             if pad == 0:
@@ -213,8 +188,8 @@ class PdbPredictor(_AbstractPredictorPdb):
             if output_h5_file is not None:
                 output_h5_file.create_dataset(prediction_dataset, data=prediction_map, compression="gzip")
 
-            if grid is not None:
-                s = self.makePdbPrediction(structure, grid, prediction_map[0])
+            if True:
+                s = pdbData.makePdbPrediction(prediction_map[0])
                 if len(s) == 0:
                     open(f'{output_pdb_path}.empty', 'a').close()
                 else:

@@ -6,6 +6,9 @@ from scipy.ndimage import rotate, map_coordinates, gaussian_filter
 from pytorch3dunet.datasets.utils import calculate_stats
 from torchvision.transforms import Compose
 from pytorch3dunet.unet3d.utils import get_logger
+from typing import Dict, Union, Optional
+from numbers import Number
+from scipy.spatial.transform import Rotation
 
 # WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
@@ -129,6 +132,53 @@ class RandomRotate:
         return m
 
 
+class RandomRotate3D:
+    """
+    Rotate an array by a random degrees from taken from (-angle_spectrum, angle_spectrum) interval.
+    Rotation axis is picked at random from the list of provided axes.
+    """
+
+    def __init__(self, allowRotations, debug_str, mode: Union[str, Dict[int, str]], order=3, cval=0, **kwargs):
+        """
+            mode: it's a dict feature number -> interpolation mode
+        """
+        self.cval = cval
+        self.allowRotations = allowRotations
+        self.debug_str = debug_str
+
+        if isinstance(mode, str):
+            self.mode = {0: mode}
+        else:
+            self.mode = mode
+
+        self.order = order
+
+    def __call__(self, m):
+
+        if not self.allowRotations:
+            return m
+
+        assert (m.ndim == 3 and len(self.mode) == 1) or m.shape[0] == len(self.mode)
+
+        # r = Rotation.random(random_state=self.random_state)
+        seed = torch.randint(high=2**32 - 1, size=()).item()
+        r = Rotation.random(random_state=seed)
+        angles = r.as_euler('zxy')
+        logger.debug(f'Random rotation matrix angles: {list(angles)} for {self.debug_str}')
+        axes = [(0, 1), (1, 2), (0, 2)]
+
+        for axis,angle in zip(axes, angles):
+            angle = angle / np.pi * 180
+
+            if m.ndim == 3:
+                m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode[0], cval=self.cval)
+            else:
+                channels = [rotate(m[c], angle, axes=axis, reshape=False, order=self.order, mode=self.mode[c], cval=self.cval) for c
+                            in range(m.shape[0])]
+                m = np.stack(channels, axis=0)
+
+        return m
+
 # it's relatively slow, i.e. ~1s per patch of size 64x200x200, so use multiple workers in the DataLoader
 # remember to use spline_order=0 when transforming the labels
 class ElasticDeformation:
@@ -154,6 +204,7 @@ class ElasticDeformation:
         self.apply_3d = apply_3d
 
     def __call__(self, m):
+        # FIXME
         if self.random_state.uniform() < self.execution_probability:
             assert m.ndim in [3, 4]
 
@@ -192,7 +243,7 @@ class Standardize:
     Apply Z-score normalization to a given input tensor, i.e. re-scaling the values to be 0-mean and 1-std.
     """
 
-    def __init__(self, stats : SampleStats, eps=1e-10, channels=None,  **kwargs):
+    def __init__(self, stats: SampleStats, eps=1e-10, channels:Optional[Dict[str,Number]] = None,  **kwargs):
         """ If channels is None average across all channel. Otherwise channel-wise separately to each channel in channels
         """
         assert stats is not None
@@ -272,19 +323,20 @@ class AdditiveGaussianNoise:
         self.scale = scale
 
     def __call__(self, m):
+        # FIXME
         if self.random_state.uniform() < self.execution_probability:
             std = self.random_state.uniform(self.scale[0], self.scale[1])
-            logger.info(f"Adding gaussian noise with std = {std}")
-            logger.info(f"Type before noise: {m.dtype}")
+            logger.debug(f"Adding gaussian noise with std = {std}")
+            logger.debug(f"Type before noise: {m.dtype}")
             gaussian_noise = self.random_state.normal(0, std, size=m.shape)
             if torch.is_tensor(m):
                 # TODO This is slow, should define it directly on the GPU
                 gaussian_noise = torch.from_numpy(gaussian_noise.astype(torch_to_numpy_dtype_dict[m.dtype]))
             else:
                 gaussian_noise = gaussian_noise.astype(m.dtype)
-            logger.info(f"Type of noise: {gaussian_noise.dtype}")
+            logger.debug(f"Type of noise: {gaussian_noise.dtype}")
             ret = m + gaussian_noise
-            logger.info(f"Type after noise: {ret.dtype}")
+            logger.debug(f"Type after noise: {ret.dtype}")
             return ret
         return m
 
@@ -296,6 +348,7 @@ class AdditivePoissonNoise:
         self.lam = lam
 
     def __call__(self, m):
+        # FIXME
         if self.random_state.uniform() < self.execution_probability:
             lam = self.random_state.uniform(self.lam[0], self.lam[1])
             poisson_noise = self.random_state.poisson(lam, size=m.shape)
@@ -319,7 +372,7 @@ class ToTensor:
         if self.expand_dims and m.ndim == 3:
             m = np.expand_dims(m, axis=0)
 
-        # TODO Can it be avoided to define on GPU first
+        # FIXME Can it be avoided to define on GPU first
         return torch.from_numpy(m.astype(dtype=self.dtype))
 
 
@@ -337,8 +390,8 @@ class LabelToTensor:
         return torch.from_numpy(m.astype(dtype='int64'))
 
 
-def get_transformer(config, stats):
-    base_config = {'stats': stats}
+def get_transformer(config, allowRotations, stats, debug_str=None):
+    base_config = {'stats': stats, 'allowRotations': allowRotations, 'debug_str':debug_str}
     return Transformer(config, base_config)
 
 
@@ -372,14 +425,8 @@ class Transformer:
     def _create_augmentation(self, c):
         config = dict(self.config_base)
         config.update(c)
+        # FIXME This will be reinitialised at every epoch !
         config['random_state'] = np.random.RandomState(self.seed)
+        logger.debug(f'Initialising new random state with seed = {self.seed}')
         aug_class = self._transformer_class(config['name'])
         return aug_class(**config)
-
-
-def _recover_ignore_index(input, orig, ignore_index):
-    if ignore_index is not None:
-        mask = orig == ignore_index
-        input[mask] = ignore_index
-
-    return input

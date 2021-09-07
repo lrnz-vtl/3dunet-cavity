@@ -11,6 +11,11 @@ from multiprocessing import Pool, cpu_count
 import numpy as np
 from potsim2 import PotGrid
 import typing
+import importlib
+
+miniball_spec = importlib.util.find_spec("miniball")
+if miniball_spec is not None:
+    import miniball
 
 logger = get_logger('UtilsPdb')
 
@@ -83,7 +88,8 @@ class PdbDataHandler:
                  pregrid_transformer_config,
                  tmp_data_folder,
                  pdb2pqrPath,
-                 cleanup):
+                 cleanup,
+                 reuse_grids=False):
 
         self.src_data_folder = src_data_folder
         self.name = name
@@ -91,21 +97,82 @@ class PdbDataHandler:
         self.pdb2pqrPath = pdb2pqrPath
         self.cleanup = cleanup
         self.grids = None
-
-        structure, ligand = self._processPdb()
-
-        for elem in pregrid_transformer_config:
-            if elem['name'] == 'RandomRotate':
-                structure, ligand = self._randomRotatePdb(structure, ligand)
+        self.reuse_grids = reuse_grids
 
         # Serialise structure to file, needed for pickling
         self.structure_fname = str(Path(self.tmp_data_folder) / "structure.pdb")
         self.ligand_fname = str(Path(self.tmp_data_folder) / "ligand.pdb")
-        pr.writePDB(self.structure_fname, structure)
-        pr.writePDB(self.ligand_fname, ligand)
+
+        if self.reuse_grids and os.path.exists(self.structure_fname) and os.path.exists(self.ligand_fname):
+            pass
+        else:
+            structure, ligand = self._processPdb()
+
+            for elem in pregrid_transformer_config:
+                if elem['name'] == 'RandomRotate':
+                    structure, ligand = self._randomRotatePdb(structure, ligand)
+
+            pr.writePDB(self.structure_fname, structure)
+            pr.writePDB(self.ligand_fname, ligand)
+
+    def checkRotations(self):
+        """
+            Check if the sphere inscribed in the cube contains the whole protein. If not, grid rotations
+            could be disallowed for safety
+        """
+        structure, _ = self.getStructureLigand()
+        coords = np.array(list(structure.getCoords()))
+
+        grid: Grid = next(iter(self.grids.values()))
+
+        if miniball_spec is not None:
+            mb = miniball.Miniball(coords)
+            C = mb.center()
+            R = np.sqrt(mb.squared_radius())
+
+            if R > grid.grid_size / 2:
+                logger.warn(f'{self.name} cannot fit in a ball, R = {R}, C = {C}. Rotations will be turned off')
+                return False
+
+        CubeC = np.array([(e[-1] + e[0]) / 2 for e in grid.edges])
+        dists = np.sqrt(((coords - CubeC) ** 2).sum(axis=1))
+        if max(dists) > grid.grid_size / 2:
+            logger.warn(f'{self.name} should be centered better in the cube. Rotations will be disallowed')
+            return False
+
+        return True
 
     def getStructureLigand(self):
         return pr.parsePDB(self.structure_fname), pr.parsePDB(self.ligand_fname)
+
+    def makePdbPrediction(self, pred, expandResidues=True):
+
+        structure, _ = self.getStructureLigand()
+        grid: Grid = next(iter(self.grids.values()))
+
+        assert pred.shape == grid.shape
+
+        predbin = pred > 0.5
+        coords = []
+
+        for i, coord in enumerate(structure.getCoords()):
+            x, y, z = coord
+            binx = int((x - min(grid.edges[0])) / grid.delta[0])
+            biny = int((y - min(grid.edges[1])) / grid.delta[1])
+            binz = int((z - min(grid.edges[2])) / grid.delta[2])
+
+            if predbin[binx, biny, binz]:
+                coords.append(i)
+
+        if len(coords) == 0:
+            return pr.AtomGroup()
+
+        atoms = structure[coords]
+        if expandResidues:
+            idxstr = ' '.join(map(str, atoms.getIndices()))
+            return structure.select(f'same residue as index {idxstr}')
+        else:
+            return atoms
 
     def getRawsLabels(self, features_config, grid_config):
         ''' This also populates the self.grid variable '''
@@ -135,7 +202,6 @@ class PdbDataHandler:
     def _randomRotatePdb(self, structure, ligand):
         # Todo Init seed?
         m = Rotation.random()
-        # m = Rotation.from_euler(angles=[0.29980811330064344, 0.3443362966037462, 2.2242614439106614], seq='zxy')
 
         r = m.as_matrix()
 
@@ -170,23 +236,26 @@ class PdbDataHandler:
     def _runApbs(self, dst_pdb_file, grid_size, dielec_const_list) -> typing.Dict[float, PotGrid]:
         pqr_output = f"{self.tmp_data_folder}/protein.pqr"
 
-        logger.debug(f'Running pdb2pqr on {self.name}')
+        if self.reuse_grids and os.path.exists(pqr_output):
+            pass
+        else:
+            logger.debug(f'Running pdb2pqr on {self.name}')
 
-        proc = subprocess.Popen(
-            [
-                self.pdb2pqrPath,
-                "--with-ph=7.4",
-                "--ff=PARSE",
-                "--chain",
-                dst_pdb_file,
-                pqr_output
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        cmd_out = proc.communicate()
-        if proc.returncode != 0:
-            raise Exception(cmd_out[1].decode())
+            proc = subprocess.Popen(
+                [
+                    self.pdb2pqrPath,
+                    "--with-ph=7.4",
+                    "--ff=PARSE",
+                    "--chain",
+                    dst_pdb_file,
+                    pqr_output
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            cmd_out = proc.communicate()
+            if proc.returncode != 0:
+                raise Exception(cmd_out[1].decode())
 
         grids = {dielec_const: self._runApbsSingle(pqr_output, dst_pdb_file, grid_size, dielec_const) for dielec_const in dielec_const_list}
 
@@ -196,29 +265,33 @@ class PdbDataHandler:
     def _runApbsSingle(self, pqr_output, dst_pdb_file, grid_size, dielec_const) -> PotGrid:
         grid_fname = f"{self.tmp_data_folder}/grid_{dielec_const}.dx.gz"
 
-        logger.debug(f'Running apbs on {self.name} with dielec_const = {dielec_const}')
+        if self.reuse_grids and os.path.exists(grid_fname):
+            pass
 
-        owd = os.getcwd()
-        os.chdir(self.tmp_data_folder)
+        else:
+            logger.debug(f'Running apbs on {self.name} with dielec_const = {dielec_const}')
 
-        apbs_in_fname = "apbs-in"
-        grid_fname_in = '.'.join(str(Path(grid_fname).name).split('.')[:-2])
-        input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=grid_fname_in,
-                          grid_size=grid_size, dielec_const=dielec_const)
+            owd = os.getcwd()
+            os.chdir(self.tmp_data_folder)
 
-        with open(apbs_in_fname, "w") as f:
-            f.write(input)
+            apbs_in_fname = "apbs-in"
+            grid_fname_in = '.'.join(str(Path(grid_fname).name).split('.')[:-2])
+            input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=grid_fname_in,
+                              grid_size=grid_size, dielec_const=dielec_const)
 
-        # generates dx.gz grid file
-        proc = subprocess.Popen(
-            ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        cmd_out = proc.communicate()
-        if proc.returncode != 0:
-            raise Exception(cmd_out[1].decode())
+            with open(apbs_in_fname, "w") as f:
+                f.write(input)
 
-        self._remove(apbs_in_fname)
-        os.chdir(owd)
+            # generates dx.gz grid file
+            proc = subprocess.Popen(
+                ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            cmd_out = proc.communicate()
+            if proc.returncode != 0:
+                raise Exception(cmd_out[1].decode())
+
+            self._remove(apbs_in_fname)
+            os.chdir(owd)
 
         grid = PotGrid(dst_pdb_file, grid_fname)
         self._remove(grid_fname)

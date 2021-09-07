@@ -324,6 +324,9 @@ def get_train_loaders(config):
 
     logger.info('Creating training and validation set loaders...')
 
+    regenerate_train_set = loaders_config.get('regenerate_train_set', True)
+    logger.info(f'regenerate_train_set = {regenerate_train_set}')
+
     # get dataset class
     dataset_cls_str = loaders_config.get('dataset', None)
     if dataset_cls_str is None:
@@ -344,13 +347,26 @@ def get_train_loaders(config):
 
     logger.info(f'Batch size for train/val loader: {batch_size}')
 
-    @profile
+    if hasattr(dataset_class, 'collate_fn'):
+        collate_fn = dataset_class.collate_fn
+    else:
+        # Will use standard collate function
+        collate_fn = None
+
     def train_dataloader_gen(seed):
+        logger.debug('Generating train datasets...')
         train_datasets = dataset_class.create_datasets(loaders_config, phase='train')
-        return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers,
+                          collate_fn=collate_fn)
+
+    if not regenerate_train_set:
+        train_Dataloader = train_dataloader_gen(0)
+        def train_dataloader_gen(seed):
+            return train_Dataloader
 
     val_datasets = dataset_class.create_datasets(loaders_config, phase='val')
-    val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers,
+                                collate_fn=collate_fn)
     def val_dataloader_gen(seed):
         return val_Dataloader
 
@@ -382,7 +398,7 @@ def get_test_loaders(config):
 
     test_datasets = dataset_class.create_datasets(loaders_config, phase='test')
 
-    num_workers = loaders_config.get('num_workers', 1)
+    num_workers = loaders_config.get('num_workers', 0)
     logger.info(f'Number of workers for the dataloader: {num_workers}')
 
     batch_size = loaders_config.get('batch_size', 1)

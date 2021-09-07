@@ -3,23 +3,18 @@ from multiprocessing import Lock, Pool, cpu_count
 from pathlib import Path
 import h5py
 import numpy as np
-from potsim2 import PotGrid
-import prody as pr
-import subprocess
-from scipy.spatial.transform import Rotation
+import glob
 import pytorch3dunet.augment.transforms as transforms
 from pytorch3dunet.augment.transforms import SampleStats
-import pytorch3dunet.augment.featurizer as featurizer
-from pytorch3dunet.augment.featurizer import Grid
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
     default_prediction_collate
-from pytorch3dunet.datasets.utils_pdb import processPdb, PdbDataHandler
+from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
 from pytorch3dunet.unet3d.utils import get_logger, profile
 import uuid
+from torch.utils.data._utils.collate import default_collate
 
 logger = get_logger('PdbDataset')
 lock = Lock()
-
 
 def apbsInput(pqr_fname, grid_fname, dielec_const, grid_size):
     return f"""read
@@ -77,13 +72,15 @@ class AbstractDataset(ConfigDataset):
     def create_datasets(cls, dataset_config, phase):
         raise NotImplementedError
 
-    def __init__(self, raws, labels, weight_maps, name, tmp_data_folder,
+    def __init__(self, raws, labels, weight_maps, tmp_data_folder,
                  phase,
                  slice_builder_config,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
                  instance_ratio=None,
-                 random_seed=0):
+                 random_seed=0,
+                 allowRotations=True,
+                 debug_str=None):
         """
         :param phase: 'train' for training, 'val' for validation, 'test' for testing; data augmentation is performed
             only during the 'train' phase
@@ -92,8 +89,6 @@ class AbstractDataset(ConfigDataset):
         :param mirror_padding (int or tuple): number of voxels padded to each axis
         :param a number between (0, 1]: specifies a fraction of ground truth instances to be sampled from the dense ground truth labels
         """
-
-        self.name = name
         self.tmp_data_folder = tmp_data_folder
 
         self.h5path = Path(self.tmp_data_folder) / f'grids.h5'
@@ -118,7 +113,8 @@ class AbstractDataset(ConfigDataset):
         self.stats = SampleStats(raws)
         # min_value, max_value, mean, std = self.ds_stats(raws)
 
-        self.transformer = transforms.get_transformer(transformer_config, stats=self.stats)
+        self.transformer = transforms.get_transformer(transformer_config, allowRotations=allowRotations,
+                                                      debug_str=debug_str, stats=self.stats)
         self.raw_transform = self.transformer.raw_transform()
 
         if phase != 'test':
@@ -178,9 +174,6 @@ class AbstractDataset(ConfigDataset):
         return min_value, max_value, mean, std
 
     def __getitem__(self, idx):
-
-        logger.debug(f'Getting idx {idx} from {self.name}')
-
         if idx >= len(self):
             raise StopIteration
 
@@ -197,7 +190,7 @@ class AbstractDataset(ConfigDataset):
                 # discard the channel dimension in the slices: predictor requires only the spatial dimensions of the volume
                 if len(raw_idx) == 4:
                     raw_idx = raw_idx[1:]
-                return self.name, (raw_patch_transformed, raw_idx)
+                return (raw_patch_transformed, raw_idx)
             else:
                 labels = list(h5['labels'])
                 # get the slice for a given index 'idx'
@@ -210,9 +203,10 @@ class AbstractDataset(ConfigDataset):
                     weight_patch_transformed = self._transform_patches(weight_maps, weight_idx, self.weight_transform)
                     return raw_patch_transformed, label_patch_transformed, weight_patch_transformed
                 # return the transformed raw and label patches
-                return self.name, (raw_patch_transformed, label_patch_transformed)
+                return (raw_patch_transformed, label_patch_transformed)
 
     @classmethod
+    # TODO Needs to be fixed
     def prediction_collate(cls, batch):
         names = [name for name,_ in batch]
         assert all(x == names[0] for x in names)
@@ -263,14 +257,28 @@ class StandardPDBDataset(AbstractDataset):
                  instance_ratio=None,
                  random_seed=0):
 
+        reuse_grids = exe_config.get('reuse_grids', False)
+        randomize_name = exe_config.get('randomize_name', False)
+
         self.src_data_folder = src_data_folder
         self.name = name
 
         assert phase in ['train', 'val', 'test']
 
-        uuids = uuid.uuid1()
-        tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
-        os.makedirs(tmp_data_folder)
+        if randomize_name:
+            if reuse_grids:
+                existing = list(glob.glob(str(Path(exe_config['tmp_folder']) / f"{name}_*")))
+                if len(existing) > 0:
+                    uuids = existing[0].split('_')[-1]
+                    logger.info(f'Reusing existing uuid={uuids}')
+            else:
+                uuids = uuid.uuid1()
+            tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
+
+        else:
+            tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}")
+
+        os.makedirs(tmp_data_folder, exist_ok=True)
         logger.debug(f'tmp_data_folder: {tmp_data_folder}')
 
         try:
@@ -278,9 +286,12 @@ class StandardPDBDataset(AbstractDataset):
                                                  pregrid_transformer_config=pregrid_transformer_config,
                                                  tmp_data_folder=tmp_data_folder,
                                                  pdb2pqrPath=exe_config['pdb2pqrPath'],
-                                                 cleanup=exe_config.get('cleanup', False))
+                                                 cleanup=exe_config.get('cleanup', False),
+                                                 reuse_grids=reuse_grids
+                                                 )
 
             raws, labels = self.pdbDataHandler.getRawsLabels(features_config=features_config, grid_config=grid_config)
+            allowRotations = self.pdbDataHandler.checkRotations()
 
         except Exception as e:
             raise type(e)(f"Tmp folder: {tmp_data_folder}") from e
@@ -296,17 +307,26 @@ class StandardPDBDataset(AbstractDataset):
         weight_maps = None
 
         super().__init__(raws, labels, weight_maps,
-                         name=self.name,
                          tmp_data_folder=tmp_data_folder,
                          phase=phase,
                          slice_builder_config=slice_builder_config,
                          transformer_config=transformer_config,
                          mirror_padding=mirror_padding,
                          instance_ratio=instance_ratio,
-                         random_seed=random_seed)
+                         random_seed=random_seed,
+                         allowRotations=allowRotations,
+                         debug_str=self.name)
 
     def getStructure(self):
         return self.pdbDataHandler.getStructureLigand()[0]
+
+    def __getitem__(self, idx):
+        logger.debug(f'Getting idx {idx} from {self.name}')
+        return self.name, self.pdbDataHandler, super(StandardPDBDataset, self).__getitem__(idx)
+
+    @classmethod
+    def collate_fn(cls, xs):
+        return [x[0] for x in xs], [x[1] for x in xs], default_collate([x[2] for x in xs])
 
     @classmethod
     def create_datasets(cls, dataset_config, phase):
@@ -319,14 +339,14 @@ class StandardPDBDataset(AbstractDataset):
 
         args = [(file_path, name, dataset_config, phase) for file_path, name in file_paths]
 
-        if dataset_config.get('parallel', True):
-            nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
-            logger.info(f'Parallelizing dataset creation among {nworkers} workers')
-            pool = Pool(processes=nworkers)
+        pdb_workers = dataset_config.get('pdb_workers', 0)
+
+        if pdb_workers > 0:
+            logger.info(f'Parallelizing dataset creation among {pdb_workers} workers')
+            pool = Pool(processes=pdb_workers)
             return [x for x in pool.map(create_dataset, args) if x is not None]
         else:
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
-
 
 def create_dataset(arg):
     file_path, name, dataset_config, phase = arg
@@ -345,7 +365,7 @@ def create_dataset(arg):
     instance_ratio = phase_config.get('instance_ratio', None)
     random_seed = phase_config.get('random_seed', 0)
 
-    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup'] if k in dataset_config.keys()}
+    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup', 'reuse_grids'] if k in dataset_config.keys()}
 
     try:
         logger.info(f'Loading {phase} set from: {file_path} named {name} ...')

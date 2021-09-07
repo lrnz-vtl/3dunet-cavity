@@ -1,10 +1,9 @@
-import sys
-
 import torch
 import yaml
+import logging
 from pathlib import Path
 from pytorch3dunet.datasets.utils import get_class
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import get_logger, set_default_log_level
 from argparse import ArgumentParser
 import os
 
@@ -12,7 +11,7 @@ checkpointname = "checkpoint"
 
 logger = get_logger('TrainingSetup')
 
-def load_config(runconfigPath, nworkers, device):
+def load_config(runconfigPath, nworkers, pdbworkers, device):
 
     runconfig = yaml.safe_load(open(runconfigPath, 'r'))
 
@@ -27,8 +26,11 @@ def load_config(runconfigPath, nworkers, device):
     config['loaders']['val']['file_paths'] = [str(dataFolder / name) for name in runconfig['val']]
 
     config['loaders']['num_workers'] = nworkers
+    config['loaders']['pdb_workers'] = pdbworkers
+
     config['loaders']['tmp_folder'] = str(runFolder / 'tmp')
     config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
+    config['loaders']['reuse_grids'] = runconfig.get('reuse_grids', False)
 
     config['dry_run'] = runconfig.get('dryRun', False)
 
@@ -60,16 +62,24 @@ if __name__=='__main__':
     parser = ArgumentParser()
     parser.add_argument("-r", "--runconfig", dest='runconfig', type=str, required=True,
                         help=f"The run config yaml file")
+    parser.add_argument("-p", "--pdbworkers", dest='pdbworkers', type=int, required=True,
+                        help=f"Number of workers for the pdb data generation. Typically this can (and should) be "
+                             f"higher than numworkers")
     parser.add_argument("-n", "--numworkers", dest='numworkers', type=int, required=True,
                         help=f"Number of workers")
     parser.add_argument("-d", "--device", dest='device', type=str, required=False,
                         help=f"Device")
+    parser.add_argument("--debug", dest='debug', default=False, action='store_true')
 
     args = parser.parse_args()
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
+    pdbworkers = int(args.pdbworkers)
 
-    config = load_config(runconfig, nworkers, args.device)
+    if args.debug:
+        set_default_log_level(logging.DEBUG)
+
+    config = load_config(runconfig, nworkers, pdbworkers, args.device)
     logger.debug(f'Read Config is: {config}')
 
     manual_seed = config.get('manual_seed', None)
@@ -86,7 +96,5 @@ if __name__=='__main__':
     trainer_builder = get_class(trainer_builder_class, modules=['pytorch3dunet.unet3d.trainer'])
     trainer = trainer_builder.build(config)
 
-    # sys.exit(0)
-    # Start training
     trainer.fit()
 

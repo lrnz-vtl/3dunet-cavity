@@ -27,6 +27,7 @@ def load_config(runconfigPath, nworkers, device):
     config['loaders']['num_workers'] = nworkers
     config['loaders']['tmp_folder'] = str(runFolder / 'tmp')
     config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
+    config['loaders']['reuse_grids'] = runconfig.get('reuse_grids', False)
 
     config['dry_run'] = runconfig.get('dryRun', False)
 
@@ -61,8 +62,12 @@ if __name__=='__main__':
     assert 'loaders' in config, 'Could not find data loaders configuration'
     loaders_config = config['loaders']
 
-    num_workers = loaders_config.get('num_workers', 1)
+    num_workers = loaders_config.get('num_workers', 0)
+    pdb_workers = loaders_config.get('pdb_workers', 0)
+
     logger.info(f'Number of workers for dataloader: {num_workers}')
+    logger.info(f'Number of workers for preparing pdb data: {pdb_workers}')
+
     batch_size = loaders_config.get('batch_size', 1)
 
     logger.info(f'Batch size for train/val loader: {batch_size}')

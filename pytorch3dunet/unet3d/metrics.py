@@ -1,15 +1,25 @@
 import importlib
-
 import numpy as np
 import torch
-from skimage import measure
-from skimage.metrics import adapted_rand_error, peak_signal_noise_ratio
-
 from pytorch3dunet.unet3d.losses import compute_per_channel_dice
-from pytorch3dunet.unet3d.seg_metrics import AveragePrecision, Accuracy
-from pytorch3dunet.unet3d.utils import get_logger, expand_as_one_hot, convert_to_numpy
+from pytorch3dunet.unet3d.utils import get_logger, expand_as_one_hot
+from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
 
 logger = get_logger('EvalMetric')
+
+
+class PdbFScore:
+    def __init__(self, epsilon=1e-6, **kwargs):
+        self.epsilon = epsilon
+
+    def _callSingle(self, input, pdbObj : PdbDataHandler):
+        s = pdbObj.makePdbPrediction(input)
+        
+
+    def __call__(self, input, target, pdbData):
+        if isinstance(pdbData, list):
+            return np.mean([self._callSingle(input[i], pdbData[i]) for i in len(pdbData)])
+        return self._callSingle(input, pdbData)
 
 
 class DiceCoefficient:
@@ -43,7 +53,7 @@ class MeanIoU:
         self.skip_channels = skip_channels
         self.thres = thres
 
-    def __call__(self, input, target):
+    def __call__(self, input, target, pdbObj=None):
         """
         :param input: 5D probability maps torch float tensor (NxCxDxHxW)
         :param target: 4D or 5D ground truth torch tensor. 4D (NxDxHxW) tensor will be expanded to 5D as one-hot
@@ -98,326 +108,11 @@ class MeanIoU:
         _, max_index = torch.max(input, dim=0, keepdim=True)
         return torch.zeros_like(input, dtype=torch.uint8).scatter_(0, max_index, 1)
 
-    def _jaccard_index(self, prediction, target):
+    def _jaccard_index(self, prediction, target, pdbObj=None):
         """
         Computes IoU for a given target and prediction tensors
         """
         return torch.sum(prediction & target).float() / torch.clamp(torch.sum(prediction | target).float(), min=1e-8)
-
-
-class AdaptedRandError:
-    """
-    A functor which computes an Adapted Rand error as defined by the SNEMI3D contest
-    (http://brainiac2.mit.edu/SNEMI3D/evaluation).
-
-    This is a generic implementation which takes the input, converts it to the segmentation image (see `input_to_segm()`)
-    and then computes the ARand between the segmentation and the ground truth target. Depending on one's use case
-    it's enough to extend this class and implement the `input_to_segm` method.
-
-    Args:
-        use_last_target (bool): use only the last channel from the target to compute the ARand
-    """
-
-    def __init__(self, use_last_target=False, **kwargs):
-        self.use_last_target = use_last_target
-
-    def __call__(self, input, target):
-        """
-        Compute ARand Error for each input, target pair in the batch and return the mean value.
-
-        Args:
-            input (torch.tensor): 5D (NCDHW) output from the network
-            target (torch.tensor): 4D (NDHW) ground truth segmentation
-
-        Returns:
-            average ARand Error across the batch
-        """
-
-        def _arand_err(gt, seg):
-            n_seg = len(np.unique(seg))
-            if n_seg == 1:
-                return 0.
-            return adapted_rand_error(gt, seg)[0]
-
-        # converts input and target to numpy arrays
-        input, target = convert_to_numpy(input, target)
-        if self.use_last_target:
-            target = target[:, -1, ...]  # 4D
-        else:
-            # use 1st target channel
-            target = target[:, 0, ...]  # 4D
-
-        # ensure target is of integer type
-        target = target.astype(np.int)
-
-        per_batch_arand = []
-        for _input, _target in zip(input, target):
-            n_clusters = len(np.unique(_target))
-            # skip ARand eval if there is only one label in the patch due to the zero-division error in Arand impl
-            # xxx/skimage/metrics/_adapted_rand_error.py:70: RuntimeWarning: invalid value encountered in double_scalars
-            # precision = sum_p_ij2 / sum_a2
-            logger.info(f'Number of ground truth clusters: {n_clusters}')
-            if n_clusters == 1:
-                logger.info('Skipping ARandError computation: only 1 label present in the ground truth')
-                per_batch_arand.append(0.)
-                continue
-
-            # convert _input to segmentation CDHW
-            segm = self.input_to_segm(_input)
-            assert segm.ndim == 4
-
-            # compute per channel arand and return the minimum value
-            per_channel_arand = [_arand_err(_target, channel_segm) for channel_segm in segm]
-            logger.info(f'Min ARand for channel: {np.argmin(per_channel_arand)}')
-            per_batch_arand.append(np.min(per_channel_arand))
-
-        # return mean arand error
-        mean_arand = torch.mean(torch.tensor(per_batch_arand))
-        logger.info(f'ARand: {mean_arand.item()}')
-        return mean_arand
-
-    def input_to_segm(self, input):
-        """
-        Converts input tensor (output from the network) to the segmentation image. E.g. if the input is the boundary
-        pmaps then one option would be to threshold it and run connected components in order to return the segmentation.
-
-        :param input: 4D tensor (CDHW)
-        :return: segmentation volume either 4D (segmentation per channel)
-        """
-        # by deafult assume that input is a segmentation volume itself
-        return input
-
-
-class BoundaryAdaptedRandError(AdaptedRandError):
-    """
-    Compute ARand between the input boundary map and target segmentation.
-    Boundary map is thresholded, and connected components is run to get the predicted segmentation
-    """
-
-    def __init__(self, thresholds=None, use_last_target=True, input_channel=None, invert_pmaps=True,
-                 save_plots=False, plots_dir='.', **kwargs):
-        super().__init__(use_last_target=use_last_target, save_plots=save_plots, plots_dir=plots_dir, **kwargs)
-        if thresholds is None:
-            thresholds = [0.3, 0.4, 0.5, 0.6]
-        assert isinstance(thresholds, list)
-        self.thresholds = thresholds
-        self.input_channel = input_channel
-        self.invert_pmaps = invert_pmaps
-
-    def input_to_segm(self, input):
-        if self.input_channel is not None:
-            input = np.expand_dims(input[self.input_channel], axis=0)
-
-        segs = []
-        for predictions in input:
-            for th in self.thresholds:
-                # threshold probability maps
-                predictions = predictions > th
-
-                if self.invert_pmaps:
-                    # for connected component analysis we need to treat boundary signal as background
-                    # assign 0-label to boundary mask
-                    predictions = np.logical_not(predictions)
-
-                predictions = predictions.astype(np.uint8)
-                # run connected components on the predicted mask; consider only 1-connectivity
-                seg = measure.label(predictions, background=0, connectivity=1)
-                segs.append(seg)
-
-        return np.stack(segs)
-
-
-class GenericAdaptedRandError(AdaptedRandError):
-    def __init__(self, input_channels, thresholds=None, use_last_target=True, invert_channels=None, **kwargs):
-
-        super().__init__(use_last_target=use_last_target, **kwargs)
-        assert isinstance(input_channels, list) or isinstance(input_channels, tuple)
-        self.input_channels = input_channels
-        if thresholds is None:
-            thresholds = [0.3, 0.4, 0.5, 0.6]
-        assert isinstance(thresholds, list)
-        self.thresholds = thresholds
-        if invert_channels is None:
-            invert_channels = []
-        self.invert_channels = invert_channels
-
-    def input_to_segm(self, input):
-        # pick only the channels specified in the input_channels
-        results = []
-        for i in self.input_channels:
-            c = input[i]
-            # invert channel if necessary
-            if i in self.invert_channels:
-                c = 1 - c
-            results.append(c)
-
-        input = np.stack(results)
-
-        segs = []
-        for predictions in input:
-            for th in self.thresholds:
-                # run connected components on the predicted mask; consider only 1-connectivity
-                seg = measure.label((predictions > th).astype(np.uint8), background=0, connectivity=1)
-                segs.append(seg)
-
-        return np.stack(segs)
-
-
-class GenericAveragePrecision:
-    def __init__(self, min_instance_size=None, use_last_target=False, metric='ap', **kwargs):
-        self.min_instance_size = min_instance_size
-        self.use_last_target = use_last_target
-        assert metric in ['ap', 'acc']
-        if metric == 'ap':
-            # use AveragePrecision
-            self.metric = AveragePrecision()
-        else:
-            # use Accuracy at 0.5 IoU
-            self.metric = Accuracy(iou_threshold=0.5)
-
-    def __call__(self, input, target):
-        if target.dim() == 5:
-            if self.use_last_target:
-                target = target[:, -1, ...]  # 4D
-            else:
-                # use 1st target channel
-                target = target[:, 0, ...]  # 4D
-
-        input1 = input2 = input
-        multi_head = isinstance(input, tuple)
-        if multi_head:
-            input1, input2 = input
-
-        input1, input2, target = convert_to_numpy(input1, input2, target)
-
-        batch_aps = []
-        i_batch = 0
-        # iterate over the batch
-        for inp1, inp2, tar in zip(input1, input2, target):
-            if multi_head:
-                inp = (inp1, inp2)
-            else:
-                inp = inp1
-
-            segs = self.input_to_seg(inp, tar)  # expects 4D
-            assert segs.ndim == 4
-            # convert target to seg
-            tar = self.target_to_seg(tar)
-
-            # filter small instances if necessary
-            tar = self._filter_instances(tar)
-
-            # compute average precision per channel
-            segs_aps = [self.metric(self._filter_instances(seg), tar) for seg in segs]
-
-            logger.info(f'Batch: {i_batch}. Max Average Precision for channel: {np.argmax(segs_aps)}')
-            # save max AP
-            batch_aps.append(np.max(segs_aps))
-            i_batch += 1
-
-        return torch.tensor(batch_aps).mean()
-
-    def _filter_instances(self, input):
-        """
-        Filters instances smaller than 'min_instance_size' by overriding them with 0-index
-        :param input: input instance segmentation
-        """
-        if self.min_instance_size is not None:
-            labels, counts = np.unique(input, return_counts=True)
-            for label, count in zip(labels, counts):
-                if count < self.min_instance_size:
-                    input[input == label] = 0
-        return input
-
-    def input_to_seg(self, input, target=None):
-        raise NotImplementedError
-
-    def target_to_seg(self, target):
-        return target
-
-
-class BlobsAveragePrecision(GenericAveragePrecision):
-    """
-    Computes Average Precision given foreground prediction and ground truth instance segmentation.
-    """
-
-    def __init__(self, thresholds=None, metric='ap', min_instance_size=None, input_channel=0, **kwargs):
-        super().__init__(min_instance_size=min_instance_size, use_last_target=True, metric=metric)
-        if thresholds is None:
-            thresholds = [0.4, 0.5, 0.6, 0.7, 0.8]
-        assert isinstance(thresholds, list)
-        self.thresholds = thresholds
-        self.input_channel = input_channel
-
-    def input_to_seg(self, input, target=None):
-        input = input[self.input_channel]
-        segs = []
-        for th in self.thresholds:
-            # threshold and run connected components
-            mask = (input > th).astype(np.uint8)
-            seg = measure.label(mask, background=0, connectivity=1)
-            segs.append(seg)
-        return np.stack(segs)
-
-
-class BlobsBoundaryAveragePrecision(GenericAveragePrecision):
-    """
-    Computes Average Precision given foreground prediction, boundary prediction and ground truth instance segmentation.
-    Segmentation mask is computed as (P_mask - P_boundary) > th followed by a connected component
-    """
-
-    def __init__(self, thresholds=None, metric='ap', min_instance_size=None, **kwargs):
-        super().__init__(min_instance_size=min_instance_size, use_last_target=True, metric=metric)
-        if thresholds is None:
-            thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
-        assert isinstance(thresholds, list)
-        self.thresholds = thresholds
-
-    def input_to_seg(self, input, target=None):
-        # input = P_mask - P_boundary
-        input = input[0] - input[1]
-        segs = []
-        for th in self.thresholds:
-            # threshold and run connected components
-            mask = (input > th).astype(np.uint8)
-            seg = measure.label(mask, background=0, connectivity=1)
-            segs.append(seg)
-        return np.stack(segs)
-
-
-class BoundaryAveragePrecision(GenericAveragePrecision):
-    """
-    Computes Average Precision given boundary prediction and ground truth instance segmentation.
-    """
-
-    def __init__(self, thresholds=None, min_instance_size=None, input_channel=0, **kwargs):
-        super().__init__(min_instance_size=min_instance_size, use_last_target=True)
-        if thresholds is None:
-            thresholds = [0.3, 0.4, 0.5, 0.6]
-        assert isinstance(thresholds, list)
-        self.thresholds = thresholds
-        self.input_channel = input_channel
-
-    def input_to_seg(self, input, target=None):
-        input = input[self.input_channel]
-        segs = []
-        for th in self.thresholds:
-            seg = measure.label(np.logical_not(input > th).astype(np.uint8), background=0, connectivity=1)
-            segs.append(seg)
-        return np.stack(segs)
-
-
-class PSNR:
-    """
-    Computes Peak Signal to Noise Ratio. Use e.g. as an eval metric for denoising task
-    """
-
-    def __init__(self, **kwargs):
-        pass
-
-    def __call__(self, input, target):
-        input, target = convert_to_numpy(input, target)
-        return peak_signal_noise_ratio(target, input)
 
 
 def get_evaluation_metric(config):

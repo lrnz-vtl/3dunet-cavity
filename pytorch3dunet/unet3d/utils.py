@@ -5,13 +5,9 @@ import shutil
 import sys
 import argparse
 import h5py
-# import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import optim
-
-# plt.ioff()
-# plt.switch_backend('agg')
 
 
 import builtins
@@ -86,10 +82,19 @@ def save_network_output(output_path, output, logger=None):
 
 
 loggers = {}
+default_level = logging.INFO
 
+def set_default_log_level(level):
+    global default_level
+    default_level = level
 
-def get_logger(name, level=logging.INFO):
+def get_logger(name, level=None):
     global loggers
+    global default_level
+
+    if level is None:
+        level = default_level
+
     if loggers.get(name) is not None:
         return loggers[name]
     else:
