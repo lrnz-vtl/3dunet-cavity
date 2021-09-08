@@ -324,6 +324,8 @@ def get_train_loaders(config):
 
     logger.info('Creating training and validation set loaders...')
 
+    # NOTE At the moment I don't know how not to regenerate the data without messing with the random number generator.
+    # Can keep this true with reuse_grid = True for performance
     regenerate_train_set = loaders_config.get('regenerate_train_set', True)
     logger.info(f'regenerate_train_set = {regenerate_train_set}')
 

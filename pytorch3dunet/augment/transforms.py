@@ -10,6 +10,7 @@ from typing import Dict, Union, Optional
 from numbers import Number
 from scipy.spatial.transform import Rotation
 
+MAX_SEED = 2**32 - 1
 # WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
@@ -30,12 +31,20 @@ numpy_to_torch_dtype_dict = {
 }
 torch_to_numpy_dtype_dict = {y:x for x,y in numpy_to_torch_dtype_dict.items()}
 
+class PicklableGenerator(torch.Generator):
+    def __getstate__(self):
+        return self.get_state()
+    def __setstate__(self, state):
+        return self.set_state(state)
+
+    def genSeed(self):
+        return torch.randint(generator=self, high=MAX_SEED, size=(1,)).item()
 
 class SampleStats:
     def __init__(self, raws):
         ndim = raws[0].ndim
         self.min, self.max, self.mean, self.std = calculate_stats(raws)
-        logger.info(f"mean={self.mean}, std={self.std}")
+        logger.debug(f"mean={self.mean}, std={self.std}")
         self.channelStats = None
         if ndim == 4:
             channels = raws[0].shape[0]
@@ -50,9 +59,8 @@ class RandomFlip:
     otherwise the models won't converge.
     """
 
-    def __init__(self, random_state, axis_prob=0.5, **kwargs):
-        assert random_state is not None, 'RandomState cannot be None'
-        self.random_state = random_state
+    def __init__(self, generator: PicklableGenerator, axis_prob=0.5, **kwargs):
+        self.random_state = np.random.RandomState(seed=generator.genSeed())
         self.axes = (0, 1, 2)
         self.axis_prob = axis_prob
 
@@ -80,8 +88,8 @@ class RandomRotate90:
     IMPORTANT: assumes DHW axis order (that's why rotation is performed across (1,2) axis)
     """
 
-    def __init__(self, random_state, **kwargs):
-        self.random_state = random_state
+    def __init__(self, generator, **kwargs):
+        self.random_state = np.random.RandomState(seed=generator.genSeed())
         # always rotate around z-axis
         self.axis = (1, 2)
 
@@ -106,13 +114,14 @@ class RandomRotate:
     Rotation axis is picked at random from the list of provided axes.
     """
 
-    def __init__(self, random_state, angle_spectrum=30, axes=None, mode='reflect', order=0, **kwargs):
+    def __init__(self, generator, angle_spectrum=30, axes=None, mode='reflect', order=0, **kwargs):
+        self.random_state = np.random.RandomState(seed=generator.genSeed())
+
         if axes is None:
             axes = [(1, 0), (2, 1), (2, 0)]
         else:
             assert isinstance(axes, list) and len(axes) > 0
 
-        self.random_state = random_state
         self.angle_spectrum = angle_spectrum
         self.axes = axes
         self.mode = mode
@@ -138,13 +147,14 @@ class RandomRotate3D:
     Rotation axis is picked at random from the list of provided axes.
     """
 
-    def __init__(self, allowRotations, debug_str, mode: Union[str, Dict[int, str]], order=3, cval=0, **kwargs):
+    def __init__(self, allowRotations, generator: PicklableGenerator, debug_str, mode: Union[str, Dict[int, str]], order=3, cval=0, **kwargs):
         """
             mode: it's a dict feature number -> interpolation mode
         """
         self.cval = cval
         self.allowRotations = allowRotations
         self.debug_str = debug_str
+        self.generator = generator
 
         if isinstance(mode, str):
             self.mode = {0: mode}
@@ -160,8 +170,7 @@ class RandomRotate3D:
 
         assert (m.ndim == 3 and len(self.mode) == 1) or m.shape[0] == len(self.mode)
 
-        # r = Rotation.random(random_state=self.random_state)
-        seed = torch.randint(high=2**32 - 1, size=()).item()
+        seed = self.generator.genSeed()
         r = Rotation.random(random_state=seed)
         angles = r.as_euler('zxy')
         logger.debug(f'Random rotation matrix angles: {list(angles)} for {self.debug_str}')
@@ -187,7 +196,7 @@ class ElasticDeformation:
     Based on: https://github.com/fcalvet/image_tools/blob/master/image_augmentation.py#L62
     """
 
-    def __init__(self, random_state, spline_order, alpha=2000, sigma=50, execution_probability=0.1, apply_3d=True,
+    def __init__(self, generator, spline_order, alpha=2000, sigma=50, execution_probability=0.1, apply_3d=True,
                  **kwargs):
         """
         :param spline_order: the order of spline interpolation (use 0 for labeled images)
@@ -196,7 +205,7 @@ class ElasticDeformation:
         :param execution_probability: probability of executing this transform
         :param apply_3d: if True apply deformations in each axis
         """
-        self.random_state = random_state
+        self.random_state = np.random.RandomState(seed=generator.genSeed())
         self.spline_order = spline_order
         self.alpha = alpha
         self.sigma = sigma
@@ -204,7 +213,6 @@ class ElasticDeformation:
         self.apply_3d = apply_3d
 
     def __call__(self, m):
-        # FIXME
         if self.random_state.uniform() < self.execution_probability:
             assert m.ndim in [3, 4]
 
@@ -317,13 +325,12 @@ class Normalize:
 
 
 class AdditiveGaussianNoise:
-    def __init__(self, random_state, scale=(0.0, 1.0), execution_probability=0.1, **kwargs):
+    def __init__(self, generator, scale=(0.0, 1.0), execution_probability=0.1, **kwargs):
         self.execution_probability = execution_probability
-        self.random_state = random_state
+        self.random_state = np.random.RandomState(seed=generator.genSeed())
         self.scale = scale
 
     def __call__(self, m):
-        # FIXME
         if self.random_state.uniform() < self.execution_probability:
             std = self.random_state.uniform(self.scale[0], self.scale[1])
             logger.debug(f"Adding gaussian noise with std = {std}")
@@ -342,13 +349,12 @@ class AdditiveGaussianNoise:
 
 
 class AdditivePoissonNoise:
-    def __init__(self, random_state, lam=(0.0, 1.0), execution_probability=0.1, **kwargs):
+    def __init__(self, generator, lam=(0.0, 1.0), execution_probability=0.1, **kwargs):
         self.execution_probability = execution_probability
-        self.random_state = random_state
+        self.random_state = np.random.RandomState(seed=generator.genSeed())
         self.lam = lam
 
     def __call__(self, m):
-        # FIXME
         if self.random_state.uniform() < self.execution_probability:
             lam = self.random_state.uniform(self.lam[0], self.lam[1])
             poisson_noise = self.random_state.poisson(lam, size=m.shape)
@@ -399,9 +405,13 @@ class Transformer:
     def __init__(self, phase_config, base_config):
         self.phase_config = phase_config
         self.config_base = base_config
-        self.seed = GLOBAL_RANDOM_STATE.randint(10000000)
+        self.seed = torch.randint(MAX_SEED, size=(1,)).item()
+        # GLOBAL_RANDOM_STATE.randint(MAX_SEED)
+
+        logger.debug(f'Initialising new random state with seed = {self.seed}')
 
     def raw_transform(self):
+
         return self._create_transform('raw')
 
     def label_transform(self):
@@ -425,8 +435,7 @@ class Transformer:
     def _create_augmentation(self, c):
         config = dict(self.config_base)
         config.update(c)
-        # FIXME This will be reinitialised at every epoch !
-        config['random_state'] = np.random.RandomState(self.seed)
-        logger.debug(f'Initialising new random state with seed = {self.seed}')
+        # FIXME Object needs to be reinitialised between epochs, all this will be always the same
+        config['generator'] = PicklableGenerator().manual_seed(self.seed)
         aug_class = self._transformer_class(config['name'])
         return aug_class(**config)

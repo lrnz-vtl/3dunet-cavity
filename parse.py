@@ -1,6 +1,6 @@
 import re
 
-fname = '/home/lorenzo/3dunet-cavity/logs/output.text'
+fname = '/home/lorenzo/3dunet-cavity/logs/out.txt'
 
 epochs = set()
 lines = []
