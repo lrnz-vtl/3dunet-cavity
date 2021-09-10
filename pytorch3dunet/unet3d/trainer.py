@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-
+import h5py
 from pytorch3dunet.datasets.utils import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
@@ -17,7 +17,7 @@ from . import utils
 logger = get_logger('UNet3DTrainer')
 
 
-def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run):
+def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run, dump_inputs):
     assert 'trainer' in config, 'Could not find trainer configuration'
     trainer_config = config['trainer']
 
@@ -64,6 +64,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
                              tensorboard_formatter=tensorboard_formatter,
                              sample_plotter=sample_plotter,
                              dry_run=dry_run,
+                             dump_inputs=dump_inputs,
                              **trainer_config)
 
 
@@ -103,7 +104,8 @@ class UNet3DTrainerBuilder:
         # Create model trainer
         trainer = _create_trainer(config, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler,
                                   loss_criterion=loss_criterion, eval_criterion=eval_criterion, loaders=loaders,
-                                  dry_run=config['dry_run'])
+                                  dry_run=config['dry_run'],
+                                  dump_inputs=config['dump_inputs'])
 
         return trainer
 
@@ -150,7 +152,7 @@ class UNet3DTrainer:
                  eval_score_higher_is_better=True, best_eval_score=None,
                  tensorboard_formatter=None, sample_plotter=None,
                  skip_train_validation=False,
-                 dry_run=False, **kwargs):
+                 dry_run=False, dump_inputs=False, **kwargs):
 
         self.model = model
         self.optimizer = optimizer
@@ -167,6 +169,7 @@ class UNet3DTrainer:
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
         self.dry_run = dry_run
+        self.dump_inputs = dump_inputs
 
         self.valLoaders = self.loaders['val'](seed=0)
 
@@ -287,6 +290,18 @@ class UNet3DTrainer:
             #
             # if input.dtype != torch.float32:
             #     raise ValueError("Not a float32")
+
+            if self.dump_inputs:
+                dump_dir = f'{self.checkpoint_dir}/dumps'
+                os.makedirs(dump_dir, exist_ok=True)
+                for name, inp, targ in zip(names,input,target):
+                    targ = targ[0]
+                    h5path = f'{dump_dir}/{name}.h5'
+                    with h5py.File(h5path, 'w') as h5:
+                        h5.create_dataset('labels', data=targ)
+                        for i, arr in enumerate(inp):
+                            h5.create_dataset(f'raws_{i}', data=arr)
+
 
             if self.dry_run:
                 continue

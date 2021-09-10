@@ -32,7 +32,8 @@ def load_config(runconfigPath, nworkers, pdbworkers, device):
     config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
     config['loaders']['reuse_grids'] = runconfig.get('reuse_grids', False)
 
-    config['dry_run'] = runconfig.get('dryRun', False)
+    config['dry_run'] = runconfig.get('dry_run', False)
+    config['dump_inputs'] = runconfig.get('dump_inputs', False)
 
     os.makedirs(config['loaders']['tmp_folder'], exist_ok=True)
 

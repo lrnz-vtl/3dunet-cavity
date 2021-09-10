@@ -192,7 +192,8 @@ class AbstractDataset(ConfigDataset):
                     raw_idx = raw_idx[1:]
                 return (raw_patch_transformed, raw_idx)
             else:
-                labels = list(h5['labels'])
+                # TODO Check me
+                labels = list(np.array(h5['labels']).astype("<f8"))
                 # get the slice for a given index 'idx'
                 label_idx = self.label_slices[idx]
                 label_patch_transformed = self._transform_patches(labels, label_idx, self.label_transform)

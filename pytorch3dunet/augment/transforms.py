@@ -176,11 +176,14 @@ class RandomRotate3D:
         logger.debug(f'Random rotation matrix angles: {list(angles)} for {self.debug_str}')
         axes = [(0, 1), (1, 2), (0, 2)]
 
-        for axis,angle in zip(axes, angles):
+        logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
+
+        for i,(axis,angle) in enumerate(zip(axes, angles)):
             angle = angle / np.pi * 180
 
             if m.ndim == 3:
                 m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode[0], cval=self.cval)
+                logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
             else:
                 channels = [rotate(m[c], angle, axes=axis, reshape=False, order=self.order, mode=self.mode[c], cval=self.cval) for c
                             in range(m.shape[0])]
