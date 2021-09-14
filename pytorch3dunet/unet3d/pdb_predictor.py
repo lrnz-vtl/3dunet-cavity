@@ -160,10 +160,8 @@ class PdbPredictor(_AbstractPredictorPdb):
         normalization_masks = [np.zeros(output_shape, dtype='uint8') for _ in range(output_heads)]
         return prediction_maps, normalization_masks
 
-
     def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset : StandardPDBDataset, output_pdb_path,
                       output_h5_file=None):
-
         pdbData = dataset.pdbDataHandler
 
         def _slice_from_pad(pad):

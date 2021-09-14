@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import h5py
 from pytorch3dunet.datasets.utils import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
-from pytorch3dunet.unet3d.metrics import get_evaluation_metric
+from pytorch3dunet.unet3d.metrics import get_evaluation_metric, get_log_metrics
 from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d.utils import profile, get_logger, \
     get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
@@ -17,7 +17,8 @@ from . import utils
 logger = get_logger('UNet3DTrainer')
 
 
-def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run, dump_inputs):
+def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run,
+                    dump_inputs, log_criterions):
     assert 'trainer' in config, 'Could not find trainer configuration'
     trainer_config = config['trainer']
 
@@ -36,6 +37,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
                                              lr_scheduler=lr_scheduler,
                                              loss_criterion=loss_criterion,
                                              eval_criterion=eval_criterion,
+                                             log_criterions=log_criterions,
                                              loaders=loaders,
                                              tensorboard_formatter=tensorboard_formatter,
                                              sample_plotter=sample_plotter,
@@ -47,6 +49,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
                                              lr_scheduler=lr_scheduler,
                                              loss_criterion=loss_criterion,
                                              eval_criterion=eval_criterion,
+                                             log_criterions=log_criterions,
                                              tensorboard_formatter=tensorboard_formatter,
                                              sample_plotter=sample_plotter,
                                              device=config['device'],
@@ -59,6 +62,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
                              lr_scheduler=lr_scheduler,
                              loss_criterion=loss_criterion,
                              eval_criterion=eval_criterion,
+                             log_criterions=log_criterions,
                              device=config['device'],
                              loaders=loaders,
                              tensorboard_formatter=tensorboard_formatter,
@@ -92,6 +96,9 @@ class UNet3DTrainerBuilder:
         # Create evaluation metric
         eval_criterion = get_evaluation_metric(config)
 
+        # Create log metrics
+        log_criterions = get_log_metrics(config)
+
         # Create data loaders
         loaders = get_train_loaders(config)
 
@@ -103,9 +110,9 @@ class UNet3DTrainerBuilder:
 
         # Create model trainer
         trainer = _create_trainer(config, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler,
-                                  loss_criterion=loss_criterion, eval_criterion=eval_criterion, loaders=loaders,
-                                  dry_run=config['dry_run'],
-                                  dump_inputs=config['dump_inputs'])
+                                  loss_criterion=loss_criterion, eval_criterion=eval_criterion,
+                                  log_criterions=log_criterions,
+                                  loaders=loaders, dry_run=config['dry_run'], dump_inputs=config['dump_inputs'])
 
         return trainer
 
@@ -146,6 +153,7 @@ class UNet3DTrainer:
 
     def __init__(self, model, optimizer, lr_scheduler, loss_criterion,
                  eval_criterion, device, loaders, checkpoint_dir,
+                 log_criterions=None,
                  max_num_epochs=100, max_num_iterations=int(1e5),
                  validate_after_iters=100, log_after_iters=100,
                  validate_iters=None, num_iterations=1, num_epoch=0,
@@ -159,6 +167,12 @@ class UNet3DTrainer:
         self.scheduler = lr_scheduler
         self.loss_criterion = loss_criterion
         self.eval_criterion = eval_criterion
+        # Additional List of scores to log just for logging, not for validating
+        if log_criterions is None:
+            self.log_criterions = []
+        else:
+            self.log_criterions = log_criterions
+
         self.device = device
         self.loaders = loaders
         self.checkpoint_dir = checkpoint_dir
@@ -382,6 +396,7 @@ class UNet3DTrainer:
 
         val_losses = utils.RunningAverage()
         val_scores = utils.RunningAverage()
+        log_scores = {type(log_criterion).__name__: utils.RunningAverage() for log_criterion in self.log_criterions}
 
         if self.sample_plotter is not None:
             self.sample_plotter.update_current_dir()
@@ -407,8 +422,13 @@ class UNet3DTrainer:
                 if i % 100 == 0:
                     self._log_images(input, target, output, 'val_')
 
-                eval_score = self.eval_criterion(output, target)
+                eval_score = self.eval_criterion(output, target, pdbObjs)
                 val_scores.update(eval_score.item(), self._batch_size(input))
+
+                for log_criterion in self.log_criterions:
+                    name = type(log_criterion).__name__
+                    log_score = log_criterion(output, target, pdbObjs)
+                    log_scores[name].update(log_score.item(), self._batch_size(input))
 
                 if self.sample_plotter is not None:
                     self.sample_plotter(i, input, output, target, 'val')
@@ -417,7 +437,8 @@ class UNet3DTrainer:
                     # stop validation
                     break
 
-            self._log_stats('val', val_losses.avg, val_scores.avg)
+            self._log_stats('val', val_losses.avg, val_scores.avg,
+                            {name: log_score.avg for name,log_score in log_scores.items()})
             logger.info(f'Validation finished. Loss: {val_losses.avg}. Evaluation score: {val_scores.avg}')
             return val_scores.avg
 
@@ -493,11 +514,12 @@ class UNet3DTrainer:
         lr = self.optimizer.param_groups[0]['lr']
         self.writer.add_scalar('learning_rate', lr, self.num_iterations)
 
-    def _log_stats(self, phase, loss_avg, eval_score_avg):
+    def _log_stats(self, phase, loss_avg, eval_score_avg, log_scores_avg):
         tag_value = {
             f'{phase}_loss_avg': loss_avg,
             f'{phase}_eval_score_avg': eval_score_avg
         }
+        tag_value.update({f'{phase}_{name}_avg':log_score_avg for name,log_score_avg in log_scores_avg.items()})
 
         for tag, value in tag_value.items():
             self.writer.add_scalar(tag, value, self.num_iterations)

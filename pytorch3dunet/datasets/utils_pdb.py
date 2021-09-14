@@ -145,12 +145,32 @@ class PdbDataHandler:
     def getStructureLigand(self):
         return pr.parsePDB(self.structure_fname), pr.parsePDB(self.ligand_fname)
 
+    def genPocket(self):
+        """
+        Generate ground truth pocket
+        """
+        structure, ligand = self.getStructureLigand()
+        complx = ligand + structure
+        lresname = ligand.getResnames()[0]
+        ret = complx.select(f'same residue as exwithin 4.5 of resname {lresname}')
+
+        tmp_pocket_path = f'{self.tmp_data_folder}/tmp_pocket.pdb'
+        pr.writePDB(tmp_pocket_path, ret)
+        ret = pr.parsePDB(tmp_pocket_path)
+        os.remove(tmp_pocket_path)
+        return ret
+
     def makePdbPrediction(self, pred, expandResidues=True):
 
         structure, _ = self.getStructureLigand()
         grid: Grid = next(iter(self.grids.values()))
 
-        assert pred.shape == grid.shape
+        if pred.ndim == 4:
+            assert len(pred)==1
+            pred = pred[0]
+        if pred.shape != grid.shape:
+            raise ValueError("pred.shape != grid.shape. Are you trying to make a pocket prediction from slices? "
+                             "That is currently not supported")
 
         predbin = pred > 0.5
         coords = []
@@ -161,6 +181,10 @@ class PdbDataHandler:
             biny = int((y - min(grid.edges[1])) / grid.delta[1])
             binz = int((z - min(grid.edges[2])) / grid.delta[2])
 
+            # if binx >= grid.shape[0] or biny >= grid.shape[1] or binz >= grid.shape[2]:
+            #     logger.warn("predbin out of bounds")
+            #     continue
+
             if predbin[binx, biny, binz]:
                 coords.append(i)
 
@@ -170,9 +194,18 @@ class PdbDataHandler:
         atoms = structure[coords]
         if expandResidues:
             idxstr = ' '.join(map(str, atoms.getIndices()))
-            return structure.select(f'same residue as index {idxstr}')
+            ret = structure.select(f'same residue as index {idxstr}')
         else:
-            return atoms
+            ret = atoms
+
+        if len(ret)==0:
+            return ret
+        else:
+            tmp_pred_path = f'{self.tmp_data_folder}/tmp_pred.pdb'
+            pr.writePDB(tmp_pred_path, ret)
+            ret = pr.parsePDB(tmp_pred_path)
+            os.remove(tmp_pred_path)
+            return ret
 
     def getRawsLabels(self, features_config, grid_config):
         ''' This also populates the self.grid variable '''

@@ -4,23 +4,72 @@ import torch
 from pytorch3dunet.unet3d.losses import compute_per_channel_dice
 from pytorch3dunet.unet3d.utils import get_logger, expand_as_one_hot
 from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
+from sklearn.metrics import f1_score
 
 logger = get_logger('EvalMetric')
 
 
-class PdbFScore:
+class PocketScore:
+    """
+    Generic class to represent scores evaluated on the residue predictions rather than grid
+    """
     def __init__(self, epsilon=1e-6, **kwargs):
         self.epsilon = epsilon
 
     def _callSingle(self, input, pdbObj : PdbDataHandler):
-        s = pdbObj.makePdbPrediction(input)
-        
+        pred = pdbObj.makePdbPrediction(input)
+        structure, _ = pdbObj.getStructureLigand()
+        pocket = pdbObj.genPocket()
+
+        if len(pred) == 0:
+            # TODO Is this necessary?
+            prednums = set()
+        else:
+            prednums = set(t.getResnum() for t in pred.iterResidues())
+
+        truenums = set(t.getResnum() for t in pocket.iterResidues())
+        allnums = set(t.getResnum() for t in structure.iterResidues())
+
+        tp = 0
+        tn = 0
+        fp = 0
+        fn = 0
+
+        y_true = []
+        y_pred = []
+
+        for num in allnums:
+            if num not in prednums and num not in truenums:
+                tn += 1
+                y_pred.append(-1)
+                y_true.append(-1)
+            elif num not in prednums and num in truenums:
+                fn += 1
+                y_pred.append(-1)
+                y_true.append(1)
+            elif num in prednums and num not in truenums:
+                fp += 1
+                y_pred.append(1)
+                y_true.append(-1)
+            elif num in prednums and num in truenums:
+                tp += 1
+                y_pred.append(1)
+                y_true.append(1)
+            else:
+                raise Exception
+
+        return self.scoref(y_true, y_pred)
 
     def __call__(self, input, target, pdbData):
-        if isinstance(pdbData, list):
+        if isinstance(pdbData, list) and len(pdbData)>1:
             return np.mean([self._callSingle(input[i], pdbData[i]) for i in len(pdbData)])
-        return self._callSingle(input, pdbData)
+        return self._callSingle(input[0], pdbData[0])
 
+
+class PocketFScore(PocketScore):
+    @staticmethod
+    def scoref(*args):
+        return f1_score(*args)
 
 class DiceCoefficient:
     """Computes Dice Coefficient.
@@ -34,7 +83,7 @@ class DiceCoefficient:
     def __init__(self, epsilon=1e-6, **kwargs):
         self.epsilon = epsilon
 
-    def __call__(self, input, target):
+    def __call__(self, input, target, pdbData=None):
         # Average across channels in order to get the final score
         return torch.mean(compute_per_channel_dice(input, target, epsilon=self.epsilon))
 
@@ -131,3 +180,19 @@ def get_evaluation_metric(config):
     metric_config = config['eval_metric']
     metric_class = _metric_class(metric_config['name'])
     return metric_class(**metric_config)
+
+
+def get_log_metrics(config):
+
+    def _metric_class(class_name):
+        m = importlib.import_module('pytorch3dunet.unet3d.metrics')
+        clazz = getattr(m, class_name)
+        return clazz
+
+    ret = []
+    if 'log_metrics' in config:
+        metric_configs = config['log_metrics']
+        for metric_config in metric_configs:
+            metric_class = _metric_class(metric_config['name'])
+            ret.append(metric_class(**metric_config))
+    return ret
