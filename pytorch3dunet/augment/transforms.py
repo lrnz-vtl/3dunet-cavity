@@ -147,14 +147,17 @@ class RandomRotate3D:
     Rotation axis is picked at random from the list of provided axes.
     """
 
-    def __init__(self, allowRotations, generator: PicklableGenerator, debug_str, mode: Union[str, Dict[int, str]], order=3, cval=0, **kwargs):
+    def __init__(self, allowRotations, generator: PicklableGenerator, debug_str, mode: Union[str, Dict[int, str]],
+                 order=3, cval=0, prob=1.0, **kwargs):
         """
             mode: it's a dict feature number -> interpolation mode
+            prob: probability of applying the rotation.
         """
         self.cval = cval
         self.allowRotations = allowRotations
         self.debug_str = debug_str
         self.generator = generator
+        self.prob = prob
 
         if isinstance(mode, str):
             self.mode = {0: mode}
@@ -168,22 +171,28 @@ class RandomRotate3D:
         if not self.allowRotations:
             return m
 
+        rand = torch.rand(size=(1,), generator=self.generator).item()
+        if rand > self.prob:
+            logger.debug(f'Not applying rotation with rand={rand}')
+            return m
+        logger.debug(f'Applying rotation with rand={rand}')
+
         assert (m.ndim == 3 and len(self.mode) == 1) or m.shape[0] == len(self.mode)
 
         seed = self.generator.genSeed()
         r = Rotation.random(random_state=seed)
         angles = r.as_euler('zxy')
-        logger.debug(f'Random rotation matrix angles: {list(angles)} for {self.debug_str}')
+        # logger.debug(f'Random rotation matrix angles: {list(angles)} for {self.debug_str}')
         axes = [(0, 1), (1, 2), (0, 2)]
 
-        logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
+        # logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
 
         for i,(axis,angle) in enumerate(zip(axes, angles)):
             angle = angle / np.pi * 180
 
             if m.ndim == 3:
                 m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode[0], cval=self.cval)
-                logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
+                # logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
             else:
                 channels = [rotate(m[c], angle, axes=axis, reshape=False, order=self.order, mode=self.mode[c], cval=self.cval) for c
                             in range(m.shape[0])]
