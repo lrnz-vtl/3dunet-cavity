@@ -62,7 +62,7 @@ class PocketScore:
 
     def __call__(self, input, target, pdbData):
         if isinstance(pdbData, list) and len(pdbData)>1:
-            return np.mean([self._callSingle(input[i], pdbData[i]) for i in len(pdbData)])
+            return np.mean([self._callSingle(input[i], pdbData[i]) for i in range(len(pdbData))])
         return self._callSingle(input[0], pdbData[0])
 
 
