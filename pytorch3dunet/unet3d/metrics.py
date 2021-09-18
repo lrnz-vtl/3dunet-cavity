@@ -164,6 +164,17 @@ class MeanIoU:
         return torch.sum(prediction & target).float() / torch.clamp(torch.sum(prediction | target).float(), min=1e-8)
 
 
+class MixedGridPdbScore:
+    def __init__(self, pdbWeight:float = 0.5):
+        assert pdbWeight > 0 and pdbWeight < 1
+        self.pdbWeight = pdbWeight
+        self.pdbScore = PocketFScore()
+        self.gridScore = MeanIoU()
+
+    def __call__(self, input, target, pdbObj=None):
+        return self.pdbWeight*self.pdbScore(input,target,pdbObj) +\
+               (1-self.pdbWeight)*self.gridScore(input,target,pdbObj)
+
 def get_evaluation_metric(config):
     """
     Returns the evaluation metric function based on provided configuration

@@ -206,14 +206,6 @@ class AbstractDataset(ConfigDataset):
                 # return the transformed raw and label patches
                 return (raw_patch_transformed, label_patch_transformed)
 
-    @classmethod
-    # TODO Needs to be fixed
-    def prediction_collate(cls, batch):
-        names = [name for name,_ in batch]
-        assert all(x == names[0] for x in names)
-        samples = [data for _,data in batch]
-        return default_prediction_collate(samples)
-
     @staticmethod
     def _transform_patches(datasets, label_idx, transformer):
         transformed_patches = []
@@ -328,6 +320,15 @@ class StandardPDBDataset(AbstractDataset):
     @classmethod
     def collate_fn(cls, xs):
         return [x[0] for x in xs], [x[1] for x in xs], default_collate([x[2] for x in xs])
+
+    @classmethod
+    def prediction_collate(cls, batch):
+        names = [name for name,_,_ in batch]
+        pdbObjs = [x for _, x, _ in batch]
+        assert all(y == names[0] for y in names)
+        samples = [data for _,_,data in batch]
+        return default_prediction_collate(samples)
+
 
     @classmethod
     def create_datasets(cls, dataset_config, phase):

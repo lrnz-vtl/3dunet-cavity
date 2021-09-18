@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from pathlib import Path
 from pytorch3dunet.datasets.pdb import StandardPDBDataset
-from pytorch3dunet.augment.featurizer import Grid
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
 import prody
