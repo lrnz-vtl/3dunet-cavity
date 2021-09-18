@@ -1,6 +1,7 @@
 import importlib
 import os
 import torch
+import logging
 import torch.nn as nn
 from pytorch3dunet.datasets.utils import get_test_loaders
 from pytorch3dunet.unet3d import utils
@@ -15,7 +16,7 @@ logger = utils.get_logger('UNet3DPredict')
 checkpointname = "checkpoint"
 predname = 'predictions'
 
-def load_config(runconfigPath, nworkers, device):
+def load_config(runconfigPath, pdbworkers, device):
     runconfig = yaml.safe_load(open(runconfigPath, 'r'))
 
     dataFolder = Path(runconfig['dataFolder'])
@@ -32,8 +33,9 @@ def load_config(runconfigPath, nworkers, device):
     config['loaders']['test']['file_paths'] = [str(dataFolder / name) for name in runconfig['test']]
     config['loaders']['tmp_folder'] = str(runFolder / 'tmp_predict')
     config['loaders']['pdb2pqrPath'] = runconfig.get('pdb2pqrPath', 'pdb2pqr')
+    config['loaders']['reuse_grids'] = runconfig.get('reuse_grids', False)
 
-    config['loaders']['num_workers'] = nworkers
+    config['loaders']['pdb_workers'] = pdbworkers
 
     for key,val in train_config['loaders'].items():
         if key not in ['val','train'] and key not in config['loaders']:
@@ -87,16 +89,20 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("-r", "--runconfig", dest='runconfig', type=str, required=True,
                         help=f"The run config yaml file")
-    parser.add_argument("-n", "--numworkers", dest='numworkers', type=int, required=True,
+    parser.add_argument("-p", "--pdbworkers", dest='pdbworkers', type=int, required=True,
                         help=f"Number of workers")
     parser.add_argument("-d", "--device", dest='device', type=str, required=False,
                         help=f"Device")
+    parser.add_argument("--debug", dest='debug', default=False, action='store_true')
 
     args = parser.parse_args()
     runconfig = args.runconfig
-    nworkers = int(args.numworkers)
+    pdbworkers = int(args.pdbworkers)
 
-    config = load_config(runconfig, nworkers, args.device)
+    if args.debug:
+        utils.set_default_log_level(logging.DEBUG)
+
+    config = load_config(runconfig, pdbworkers, args.device)
     logger.debug(f'Read Config is: {config}')
 
     # Create the model

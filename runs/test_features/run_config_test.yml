@@ -1,12 +1,11 @@
 dataFolder: /home/lorenzo/deep_apbs/srcData/pdbbind_v2019_refined
 pdb2pqrPath: /home/lorenzo/pymol/bin/pdb2pqr
-tmpl_dir: /home/lorenzo/3dunet-cavity
+reuse_grids: true
 test:
 - 2yfe
 train:
 - 4us3
 # - 3ao4
-useClusters: true
 val:
 - 4qij
 #- 1fch
