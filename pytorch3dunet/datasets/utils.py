@@ -4,18 +4,16 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from pytorch3dunet.unet3d.utils import get_logger, profile
+from abc import ABCMeta, abstractmethod
 
 logger = get_logger('Dataset')
 
 class ConfigDataset(Dataset):
-    def __getitem__(self, index):
-        raise NotImplementedError
-
-    def __len__(self):
-        raise NotImplementedError
+    __metaclass__ = ABCMeta
 
     @classmethod
-    def create_datasets(cls, dataset_config, phase):
+    @abstractmethod
+    def create_datasets(cls, dataset_config, features_config, phase):
         """
         Factory method for creating a list of datasets based on the provided config.
 
@@ -180,111 +178,6 @@ class TrivialSliceBuilder:
         return slices
 
 
-class FilterSliceBuilder(SliceBuilder):
-    """
-    Filter patches containing more than `1 - threshold` of ignore_index label
-    """
-
-    def __init__(self, raw_datasets, label_datasets, weight_datasets, patch_shape, stride_shape, ignore_index=(0,),
-                 threshold=0.6, slack_acceptance=0.01, **kwargs):
-        super().__init__(raw_datasets, label_datasets, weight_datasets, patch_shape, stride_shape, **kwargs)
-        if label_datasets is None:
-            return
-
-        rand_state = np.random.RandomState(47)
-        # print("Inside FilterSlice Builder")
-
-        def ignore_predicate(raw_label_idx):
-            label_idx = raw_label_idx[1]
-            patch = np.copy(label_datasets[0][label_idx])
-            for ii in ignore_index:
-                patch[patch == ii] = 0
-            non_ignore_counts = np.count_nonzero(patch != 0)
-            non_ignore_counts = non_ignore_counts / patch.size
-            return non_ignore_counts > threshold or rand_state.rand() < slack_acceptance
-
-        zipped_slices = zip(self.raw_slices, self.label_slices)
-        # ignore slices containing too much ignore_index
-        filtered_slices = list(filter(ignore_predicate, zipped_slices))
-        # unzip and save slices
-        assert(len(filtered_slices) > 0)
-        raw_slices, label_slices = zip(*filtered_slices)
-        self._raw_slices = list(raw_slices)
-        self._label_slices = list(label_slices)
-
-
-class EmbeddingsSliceBuilder(FilterSliceBuilder):
-    """
-    Filter patches containing more than `1 - threshold` of ignore_index label and patches containing more than
-    `patch_max_instances` labels
-    """
-
-    def __init__(self, raw_datasets, label_datasets, weight_datasets, patch_shape, stride_shape, ignore_index=(0,),
-                 threshold=0.8, slack_acceptance=0.01, patch_max_instances=48, patch_min_instances=5, **kwargs):
-        super().__init__(raw_datasets, label_datasets, weight_datasets, patch_shape, stride_shape, ignore_index,
-                         threshold, slack_acceptance, **kwargs)
-
-        if label_datasets is None:
-            return
-
-        rand_state = np.random.RandomState(47)
-
-        def ignore_predicate(raw_label_idx):
-            label_idx = raw_label_idx[1]
-            patch = label_datasets[0][label_idx]
-            num_instances = np.unique(patch).size
-
-            # patch_max_instances is a hard constraint
-            if num_instances <= patch_max_instances:
-                # make sure that we have at least patch_min_instances in the batch and allow some slack
-                return num_instances >= patch_min_instances or rand_state.rand() < slack_acceptance
-
-            return False
-
-        zipped_slices = zip(self.raw_slices, self.label_slices)
-        # ignore slices containing too much ignore_index
-        filtered_slices = list(filter(ignore_predicate, zipped_slices))
-        # unzip and save slices
-        raw_slices, label_slices = zip(*filtered_slices)
-        self._raw_slices = list(raw_slices)
-        self._label_slices = list(label_slices)
-
-
-class RandomFilterSliceBuilder(EmbeddingsSliceBuilder):
-    """
-    Filter patches containing more than `1 - threshold` of ignore_index label and return only random sample of those.
-    """
-
-    def __init__(self, raw_datasets, label_datasets, weight_datasets, patch_shape, stride_shape, ignore_index=(0,),
-                 threshold=0.8, slack_acceptance=0.01, patch_max_instances=48, patch_acceptance_probab=0.1,
-                 max_num_patches=25, **kwargs):
-        super().__init__(raw_datasets, label_datasets, weight_datasets, patch_shape, stride_shape,
-                         ignore_index=ignore_index, threshold=threshold, slack_acceptance=slack_acceptance,
-                         patch_max_instances=patch_max_instances, **kwargs)
-
-        self.max_num_patches = max_num_patches
-
-        if label_datasets is None:
-            return
-
-        rand_state = np.random.RandomState(47)
-
-        def ignore_predicate(raw_label_idx):
-            result = rand_state.rand() < patch_acceptance_probab
-            if result:
-                self.max_num_patches -= 1
-
-            return result and self.max_num_patches > 0
-
-        zipped_slices = zip(self.raw_slices, self.label_slices)
-        # ignore slices containing too much ignore_index
-        filtered_slices = list(filter(ignore_predicate, zipped_slices))
-        # unzip and save slices
-        raw_slices, label_slices = zip(*filtered_slices)
-        self._raw_slices = list(raw_slices)
-        self._label_slices = list(label_slices)
-
-
 def get_class(class_name, modules):
     for module in modules:
         m = importlib.import_module(module)
@@ -322,6 +215,8 @@ def get_train_loaders(config):
     assert 'loaders' in config, 'Could not find data loaders configuration'
     loaders_config = config['loaders']
 
+    features_config = config['featurizer']
+
     logger.info('Creating training and validation set loaders...')
 
     # NOTE At the moment I don't know how not to regenerate the data without messing with the random number generator.
@@ -334,7 +229,8 @@ def get_train_loaders(config):
     if dataset_cls_str is None:
         dataset_cls_str = 'StandardHDF5Dataset'
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
-    dataset_class = _loader_classes(dataset_cls_str)
+
+    dataset_class : ConfigDataset = _loader_classes(dataset_cls_str)
 
     assert set(loaders_config['train']['file_paths']).isdisjoint(loaders_config['val']['file_paths']), \
         "Train and validation 'file_paths' overlap. One cannot use validation data for training!"
@@ -357,7 +253,7 @@ def get_train_loaders(config):
 
     def train_dataloader_gen(seed):
         logger.debug('Generating train datasets...')
-        train_datasets = dataset_class.create_datasets(loaders_config, phase='train')
+        train_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config, phase='train')
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers,
                           collate_fn=collate_fn)
 
@@ -366,7 +262,7 @@ def get_train_loaders(config):
         def train_dataloader_gen(seed):
             return train_Dataloader
 
-    val_datasets = dataset_class.create_datasets(loaders_config, phase='val')
+    val_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config, phase='val')
     val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers,
                                 collate_fn=collate_fn)
     def val_dataloader_gen(seed):
@@ -389,6 +285,8 @@ def get_test_loaders(config):
     assert 'loaders' in config, 'Could not find data loaders configuration'
     loaders_config = config['loaders']
 
+    features_config = config['featurizer']
+
     logger.info('Creating test set loaders...')
 
     # get dataset class
@@ -398,7 +296,7 @@ def get_test_loaders(config):
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
     dataset_class = _loader_classes(dataset_cls_str)
 
-    test_datasets = dataset_class.create_datasets(loaders_config, phase='test')
+    test_datasets = dataset_class.create_datasets(loaders_config, features_config, phase='test')
 
     num_workers = loaders_config.get('num_workers', 0)
     logger.info(f'Number of workers for the dataloader: {num_workers}')

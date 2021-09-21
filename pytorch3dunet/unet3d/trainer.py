@@ -12,6 +12,8 @@ from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d.utils import profile, get_logger, \
     get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
+import importlib
+from pytorch3dunet.augment.featurizer import BaseFeatureList, get_features
 from . import utils
 
 logger = get_logger('UNet3DTrainer')
@@ -76,8 +78,10 @@ class UNet3DTrainerBuilder:
     @staticmethod
     def build(config):
         # Create the model
-        config['model']['in_channels'] = len(config['loaders']['featurizer'])
-        model = get_model(config['model'])
+
+        features: BaseFeatureList = get_features(config['featurizer'])
+
+        model = get_model(features=features, model_config=config['model'])
         # use DataParallel if more than 1 GPU available
         device = config['device']
         if torch.cuda.device_count() > 1 and not device.type == 'cpu':
@@ -100,7 +104,7 @@ class UNet3DTrainerBuilder:
         log_criterions = get_log_metrics(config)
 
         # Create data loaders
-        loaders = get_train_loaders(config)
+        loaders = get_train_loaders(config=config)
 
         # Create the optimizer
         optimizer = create_optimizer(config['optimizer'], model)
@@ -315,7 +319,6 @@ class UNet3DTrainer:
                         h5.create_dataset('labels', data=targ)
                         for i, arr in enumerate(inp):
                             h5.create_dataset(f'raws_{i}', data=arr)
-
 
             if self.dry_run:
                 continue

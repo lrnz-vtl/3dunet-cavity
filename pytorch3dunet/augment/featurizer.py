@@ -1,5 +1,11 @@
 import importlib
 import numpy as np
+import openbabel.pybel
+import prody
+from abc import ABCMeta, abstractmethod
+import itertools
+from typing import List
+import tfbio.data
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
 import typing
@@ -10,87 +16,160 @@ logger = get_logger('Featurizer')
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 
-class Grid:
-    """ Custom naive grid class """
-    def __init__(self, pot_grid : PotGrid, grid_size, keep_open=False):
-        assert pot_grid.grid.shape[0] >= grid_size
-        self.orig_shape = pot_grid.grid.shape
+class ApbsGridCollection:
+    """ Custom class representing a single electric potential grid """
+    def __init__(self, pot_grids : typing.Dict[float, PotGrid], grid_size):
+        """
+        pot_grids: Mapping dielectric constant -> PotGrid
+        """
+        firstGrid: PotGrid = next(iter(pot_grids.values()))
+        assert all(pot_grid.grid.shape == firstGrid.grid.shape for pot_grid in pot_grids.values())
+        assert all((np.array(pot_grid.edges) == np.array(firstGrid.edges)).all() for pot_grid in pot_grids.values())
+        assert all((pot_grid.delta == firstGrid.delta).all() for pot_grid in pot_grids.values())
+
+        assert firstGrid.grid.shape[0] >= grid_size
+
+        self.orig_shape = firstGrid.grid.shape
         self.grid_size = grid_size
-        if self.grid_size < pot_grid.grid.shape[0]:
+        if self.grid_size < firstGrid.grid.shape[0]:
             logger.warn(
-                f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {pot_grid.grid.shape[0]}. "
+                f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {firstGrid.grid.shape[0]}. "
                 f"Applying naive cropping!!!")
 
-        self.grid = pot_grid.grid[:self.grid_size, :self.grid_size, :self.grid_size]
-        self.edges = [x[:self.grid_size] for x in pot_grid.edges]
-        self.delta = pot_grid.delta
-        self.shape = self.grid.shape
+        self.grids = {k: pot_grid.grid[:self.grid_size, :self.grid_size, :self.grid_size] for k,pot_grid in pot_grids.items()}
+        self.edges = [x[:self.grid_size] for x in firstGrid.edges]
+        self.delta = firstGrid.delta
+        self.shape = firstGrid.grid.shape
 
     def homologate_labels(self, labels):
         assert labels.shape == self.orig_shape
         return labels[:self.grid_size, :self.grid_size, :self.grid_size]
 
-    def delGrid(self):
+    def delGrids(self):
         """ Free memory """
-        del self.grid
+        del self.grids
+
+class BaseFeatureList:
+    __metaclass__ = ABCMeta
+
+    @property
+    @abstractmethod
+    def num_features(self) -> int:
+        pass
+
+    @property
+    @abstractmethod
+    def names(self) -> List[str]:
+        pass
+
+    @abstractmethod
+    def call(self, structure:prody.AtomGroup, mol:openbabel.pybel.Molecule, grids: ApbsGridCollection) -> typing.List[np.array]:
+        raise NotImplementedError
+
+    def __call__(self, *args) -> List[np.array]:
+        ret = self.call(*args)
+        assert len(ret) == self.num_features
+        return ret
+
+    def getDielecConstList(self):
+        return []
 
 
-class PotentialGrid:
+class PotentialGrid(BaseFeatureList):
+
+    num_features = 1
+    dielec_const_default = 4.0
+
+    @property
+    def names(cls):
+        return [type(cls).__name__]
+
     def __init__(self, **kwargs):
-        self.dielec_const = kwargs['dielec_const']
+        self.dielec_const = kwargs.get('dielec_const', self.dielec_const_default)
 
-    def __call__(self, structure, grids):
-        return grids[self.dielec_const].grid
+    def call(self, structure, mol, grids):
+        return [grids.grids[self.dielec_const]]
 
-class AtomLabel:
+    def getDielecConstList(self):
+        return [self.dielec_const]
+
+
+class AtomLabel(BaseFeatureList):
+
+    num_features = 1
+
+    @property
+    def names(cls):
+        return [cls.__name__]
+
     def __init__(self, **kwargs):
         pass
 
-    def __call__(self, structure, grids : typing.Dict[float, Grid]):
-        grid = next(iter(grids.values()))
-        retgrid = np.zeros(shape=grid.shape)
+    def call(self, structure, mol, grids):
+        retgrid = np.zeros(shape=grids.shape)
 
         for i, coord in enumerate(structure.getCoords()):
             x, y, z = coord
-            binx = int((x - min(grid.edges[0])) / grid.delta[0])
-            biny = int((y - min(grid.edges[1])) / grid.delta[1])
-            binz = int((z - min(grid.edges[2])) / grid.delta[2])
+            binx = int((x - min(grids.edges[0])) / grids.delta[0])
+            biny = int((y - min(grids.edges[1])) / grids.delta[1])
+            binz = int((z - min(grids.edges[2])) / grids.delta[2])
 
             retgrid[binx, biny, binz] = 1
 
-        return retgrid
+        return [retgrid]
 
-def get_featurizer(config):
-    return Featurizer(config)
 
-def ComposeFeatures(fts):
-    def fullFt(*args):
-        if len(fts) == 1:
-            return fts[0](*args)
-        return np.stack([ft(*args) for ft in fts])
-    return fullFt
+class KalasantyFeatures(BaseFeatureList):
 
-class Featurizer:
-    def __init__(self, config):
-        self.config = config
-        self.seed = GLOBAL_RANDOM_STATE.randint(10000000)
+    @property
+    def names(self):
+        return self._names
 
-    def raw_transform(self):
-        return self._create_featurizer()
+    @property
+    def num_features(self):
+        return len(self._names)
 
-    @staticmethod
-    def _featurizer_class(class_name):
+    def __init__(self, **kwargs):
+        self.featurizer = tfbio.data.Featurizer(save_molecule_codes=False)
+        self._names = self.featurizer.FEATURE_NAMES
+
+    def call(self, structure, mol, grids):
+        prot_coords, prot_features = self.featurizer.get_features(mol)
+        max_dist = float(grids.grid_size - 1)/2.0
+        box_center = np.array([(edge[0] + edge[-1]) / 2.0 for edge in grids.edges])
+        # the coordinates must be relative to the box center
+        prot_coords -= box_center
+        ret = tfbio.data.make_grid(prot_coords, prot_features, max_dist=max_dist, grid_resolution=1.0)
+        return list(ret)
+
+
+class ComposedFeatures(BaseFeatureList):
+
+    @property
+    def names(self):
+        return self._names
+
+    @property
+    def num_features(self):
+        return self._num_features
+
+    def __init__(self, fts: List[BaseFeatureList]):
+        self.fts = fts
+        self._names = list(itertools.chain.from_iterable((ft.names for ft in fts)))
+        self._num_features = sum(ft.num_features for ft in fts)
+        assert len(self.names) == self.num_features
+
+    def call(self, *args):
+        return np.stack(list(itertools.chain.from_iterable((ft(*args) for ft in self.fts))))
+
+    def getDielecConstList(self):
+        return list(itertools.chain.from_iterable((ft.getDielecConstList() for ft in self.fts)))
+
+def get_features(configs):
+
+    def _create_feature(config):
         m = importlib.import_module('pytorch3dunet.augment.featurizer')
-        clazz = getattr(m, class_name)
-        return clazz
-
-    def _create_featurizer(self):
-        return ComposeFeatures([
-            self._create_feature(c) for c in self.config
-        ])
-
-    def _create_feature(self, c):
-        config = c
-        config['random_state'] = np.random.RandomState(self.seed)
-        ft_class = self._featurizer_class(config['name'])
+        ft_class = getattr(m, config['name'])
         return ft_class(**config)
+
+    return ComposedFeatures([_create_feature(config) for config in configs])

@@ -9,4 +9,5 @@ fi
 
 SERVER=codon-login
 DIR=/hps/nobackup/arl/chembl/lorenzo/3dunet-cavity/runs/${1}/predictions
-rsync -avz -e ssh ${SERVER}:${DIR} ./runs/${1}
+rsync -zavz -e ssh ${SERVER}:${DIR} --include="*/" --include="*.pdb" --exclude="*" ./runs/${1}
+

@@ -40,6 +40,7 @@ class PicklableGenerator(torch.Generator):
     def genSeed(self):
         return torch.randint(generator=self, high=MAX_SEED, size=(1,)).item()
 
+
 class SampleStats:
     def __init__(self, raws):
         ndim = raws[0].ndim
