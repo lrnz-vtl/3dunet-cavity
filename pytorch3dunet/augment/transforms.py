@@ -9,6 +9,8 @@ from pytorch3dunet.unet3d.utils import get_logger
 from typing import Dict, Union, Optional
 from numbers import Number
 from scipy.spatial.transform import Rotation
+from abc import ABC, abstractmethod
+
 
 MAX_SEED = 2**32 - 1
 # WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
@@ -31,6 +33,7 @@ numpy_to_torch_dtype_dict = {
 }
 torch_to_numpy_dtype_dict = {y:x for x,y in numpy_to_torch_dtype_dict.items()}
 
+
 class PicklableGenerator(torch.Generator):
     def __getstate__(self):
         return self.get_state()
@@ -52,7 +55,15 @@ class SampleStats:
             self.channelStats = [SampleStats([raw[i] for raw in raws]) for i in range(channels)]
 
 
-class RandomFlip:
+
+
+class BaseTransform(ABC):
+    @abstractmethod
+    def __call__(self, m):
+        raise NotImplementedError
+
+
+class RandomFlip(BaseTransform):
     """
     Randomly flips the image across the given axes. Image can be either 3D (DxHxW) or 4D (CxDxHxW).
 
@@ -79,70 +90,7 @@ class RandomFlip:
         return m
 
 
-class RandomRotate90:
-    """
-    Rotate an array by 90 degrees around a randomly chosen plane. Image can be either 3D (DxHxW) or 4D (CxDxHxW).
-
-    When creating make sure that the provided RandomStates are consistent between raw and labeled datasets,
-    otherwise the models won't converge.
-
-    IMPORTANT: assumes DHW axis order (that's why rotation is performed across (1,2) axis)
-    """
-
-    def __init__(self, generator, **kwargs):
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-        # always rotate around z-axis
-        self.axis = (1, 2)
-
-    def __call__(self, m):
-        assert m.ndim in [3, 4], 'Supports only 3D (DxHxW) or 4D (CxDxHxW) images'
-
-        # pick number of rotations at random
-        k = self.random_state.randint(0, 4)
-        # rotate k times around a given plane
-        if m.ndim == 3:
-            m = np.rot90(m, k, self.axis)
-        else:
-            channels = [np.rot90(m[c], k, self.axis) for c in range(m.shape[0])]
-            m = np.stack(channels, axis=0)
-
-        return m
-
-
-class RandomRotate:
-    """
-    Rotate an array by a random degrees from taken from (-angle_spectrum, angle_spectrum) interval.
-    Rotation axis is picked at random from the list of provided axes.
-    """
-
-    def __init__(self, generator, angle_spectrum=30, axes=None, mode='reflect', order=0, **kwargs):
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-
-        if axes is None:
-            axes = [(1, 0), (2, 1), (2, 0)]
-        else:
-            assert isinstance(axes, list) and len(axes) > 0
-
-        self.angle_spectrum = angle_spectrum
-        self.axes = axes
-        self.mode = mode
-        self.order = order
-
-    def __call__(self, m):
-        axis = self.axes[self.random_state.randint(len(self.axes))]
-        angle = self.random_state.randint(-self.angle_spectrum, self.angle_spectrum)
-
-        if m.ndim == 3:
-            m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode, cval=-1)
-        else:
-            channels = [rotate(m[c], angle, axes=axis, reshape=False, order=self.order, mode=self.mode, cval=-1) for c
-                        in range(m.shape[0])]
-            m = np.stack(channels, axis=0)
-
-        return m
-
-
-class RandomRotate3D:
+class RandomRotate3D(BaseTransform):
     """
     Rotate an array by a random degrees from taken from (-angle_spectrum, angle_spectrum) interval.
     Rotation axis is picked at random from the list of provided axes.
@@ -201,9 +149,10 @@ class RandomRotate3D:
 
         return m
 
+
 # it's relatively slow, i.e. ~1s per patch of size 64x200x200, so use multiple workers in the DataLoader
 # remember to use spline_order=0 when transforming the labels
-class ElasticDeformation:
+class ElasticDeformation(BaseTransform):
     """
     Apply elasitc deformations of 3D patches on a per-voxel mesh. Assumes ZYX axis order (or CZYX if the data is 4D).
     Based on: https://github.com/fcalvet/image_tools/blob/master/image_augmentation.py#L62
@@ -259,7 +208,7 @@ class ElasticDeformation:
         return m
 
 
-class Standardize:
+class Standardize(BaseTransform):
     """
     Apply Z-score normalization to a given input tensor, i.e. re-scaling the values to be 0-mean and 1-std.
     """
@@ -301,7 +250,7 @@ class Standardize:
         return (m - mean) / np.clip(std, a_min=self.eps, a_max=None)
 
 
-class PercentileNormalizer:
+class PercentileNormalizer(BaseTransform):
     def __init__(self, pmin, pmax, channelwise=False, eps=1e-10, **kwargs):
         self.eps = eps
         self.pmin = pmin
@@ -322,7 +271,7 @@ class PercentileNormalizer:
         return (m - pmin) / (pmax - pmin + self.eps)
 
 
-class Normalize:
+class Normalize(BaseTransform):
     """
     Apply simple min-max scaling to a given input tensor, i.e. shrinks the range of the data in a fixed range of [-1, 1].
     """
@@ -337,7 +286,7 @@ class Normalize:
         return np.clip(2 * norm_0_1 - 1, -1, 1)
 
 
-class AdditiveGaussianNoise:
+class AdditiveGaussianNoise(BaseTransform):
     def __init__(self, generator, scale=(0.0, 1.0), execution_probability=0.1, **kwargs):
         self.execution_probability = execution_probability
         self.random_state = np.random.RandomState(seed=generator.genSeed())
@@ -361,7 +310,7 @@ class AdditiveGaussianNoise:
         return m
 
 
-class AdditivePoissonNoise:
+class AdditivePoissonNoise(BaseTransform):
     def __init__(self, generator, lam=(0.0, 1.0), execution_probability=0.1, **kwargs):
         self.execution_probability = execution_probability
         self.random_state = np.random.RandomState(seed=generator.genSeed())
@@ -375,7 +324,7 @@ class AdditivePoissonNoise:
         return m
 
 
-class ToTensor:
+class ToTensor(BaseTransform):
     """
     Converts a given input numpy.ndarray into torch.Tensor. Adds additional 'channel' axis when the input is 3D
     and expand_dims=True (use for raw data of the shape (D, H, W)).
@@ -395,7 +344,7 @@ class ToTensor:
         return torch.from_numpy(m.astype(dtype=self.dtype))
 
 
-class Identity:
+class Identity(BaseTransform):
     def __init__(self, **kwargs):
         pass
 
@@ -403,7 +352,7 @@ class Identity:
         return m
 
 
-class LabelToTensor:
+class LabelToTensor(BaseTransform):
     def __call__(self, m):
         m = np.array(m)
         return torch.from_numpy(m.astype(dtype='int64'))

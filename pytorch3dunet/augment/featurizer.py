@@ -9,6 +9,7 @@ import tfbio.data
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
 import typing
+from typing import Dict, Union, Optional, TypeVar, Generic, TypedDict, Type
 
 logger = get_logger('Featurizer')
 
@@ -49,8 +50,14 @@ class ApbsGridCollection:
         """ Free memory """
         del self.grids
 
+
 class BaseFeatureList:
     __metaclass__ = ABCMeta
+
+    @property
+    @abstractmethod
+    def feature_types(self) -> List[type]:
+        pass
 
     @property
     @abstractmethod
@@ -81,6 +88,10 @@ class PotentialGrid(BaseFeatureList):
     dielec_const_default = 4.0
 
     @property
+    def feature_types(cls) -> List[type]:
+        return [type(cls)]
+
+    @property
     def names(cls):
         return [type(cls).__name__]
 
@@ -97,6 +108,10 @@ class PotentialGrid(BaseFeatureList):
 class AtomLabel(BaseFeatureList):
 
     num_features = 1
+
+    @property
+    def feature_types(cls) -> List[type]:
+        return [type(cls)]
 
     @property
     def names(cls):
@@ -120,6 +135,10 @@ class AtomLabel(BaseFeatureList):
 
 
 class KalasantyFeatures(BaseFeatureList):
+
+    @property
+    def feature_types(self) -> List[type]:
+        return [type(self)] * self.num_features
 
     @property
     def names(self):
@@ -146,6 +165,10 @@ class KalasantyFeatures(BaseFeatureList):
 class ComposedFeatures(BaseFeatureList):
 
     @property
+    def feature_types(self) -> List[type]:
+        return self._types
+
+    @property
     def names(self):
         return self._names
 
@@ -156,6 +179,7 @@ class ComposedFeatures(BaseFeatureList):
     def __init__(self, fts: List[BaseFeatureList]):
         self.fts = fts
         self._names = list(itertools.chain.from_iterable((ft.names for ft in fts)))
+        self._types = list(itertools.chain.from_iterable(([type(ft)]*ft.num_features for ft in fts)))
         self._num_features = sum(ft.num_features for ft in fts)
         assert len(self.names) == self.num_features
 
@@ -164,6 +188,7 @@ class ComposedFeatures(BaseFeatureList):
 
     def getDielecConstList(self):
         return list(itertools.chain.from_iterable((ft.getDielecConstList() for ft in self.fts)))
+
 
 def get_features(configs):
 
