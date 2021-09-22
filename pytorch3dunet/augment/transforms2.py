@@ -1,5 +1,5 @@
 import logging
-from typing import Union, Callable, Iterable, Generator
+from typing import Union, Callable, Iterable, Generator, Mapping
 from enum import Enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -14,6 +14,7 @@ MAX_SEED = 2**32 - 1
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 logger = get_logger('Transforms', level=logging.DEBUG)
+
 
 class PicklableGenerator(torch.Generator):
     def __getstate__(self):
@@ -41,10 +42,12 @@ SkippableTransform = Union[TransformOptions, SkippedTransform]
 
 class BaseTransform(ABC):
 
-    def __init__(self, conf, phase: Phase, featureTypes: List[Type[BaseFeatureList]]):
-        self._phase = phase
+    def __init__(self,
+                 conf: Mapping[Type[BaseFeatureList], SkippableTransform],
+                 phase: Phase):
         self._conf = conf
-        self._featureTypes = featureTypes
+        self._default_phase_options: Callable[[Type[BaseFeatureList]], SkippableTransform] = \
+            lambda ft: self.default_options(phase, ft)
 
     @classmethod
     @abstractmethod
@@ -55,18 +58,19 @@ class BaseTransform(ABC):
     def makeCallableSequence(self) -> Generator[Callable[[np.array,TransformOptions], np.array], None, None]:
         pass
 
-    def __call__(self, m: np.array) -> np.array:
+    def __call__(self, m: np.array, featureTypes:List[Type[BaseFeatureList]]) -> np.array:
         # FIXME
         # assert m.ndim == 4
-        assert m.shape[0] == len(self._featureTypes)
+        assert m.shape[0] == len(featureTypes)
         shape = m.shape
 
         for callable in self.makeCallableSequence():
             channels = []
-            for c, featureType in zip(range(m.shape[0]), self._featureTypes):
+            for c, featureType in zip(range(m.shape[0]), featureTypes):
                 opt = self._get_options(featureType)
                 if isinstance(opt, SkippedTransform):
-                    channels.append([c])
+                    logger.debug(f'dimension {c}, feature {featureType} is skipped')
+                    channels.append(m[c])
                 else:
                     channels.append(callable(m[c], opt))
             m = np.stack(channels, axis=0)
@@ -75,10 +79,7 @@ class BaseTransform(ABC):
         return m
 
     def _get_options(self, cls: Type[BaseFeatureList]) -> SkippableTransform:
-        if self._phase in self._conf.keys():
-            opt = self._conf[self._phase].get(cls, self.default_options(self._phase, cls))
-        else:
-            opt =  self.default_options(self._phase, cls)
+        opt = self._conf.get(cls, self._default_phase_options(cls))
         logger.debug(f'cls = {cls}, option = {opt}')
         return opt
 
@@ -97,15 +98,15 @@ class RandomFlip(BaseTransform):
     def default_options(cls, phase: Phase, ft: Type[BaseFeatureList]) -> SkippableTransform:
         if phase == Phase.TRAIN:
             return RandomFlipOptions(0.5)
-        return SkippedTransform
+        return SkippedTransform()
 
-    def __init__(self, conf, phase: Phase, featureTypes:List[Type[BaseFeatureList]],
+    def __init__(self, conf, phase: Phase,
                  generator: PicklableGenerator,
-                 axes = (0, 1, 2),
+                 axes=(0,),
                  **kwargs):
         self.random_state = np.random.RandomState(seed=generator.gen_seed())
         self.axes = axes
-        super().__init__(conf, phase, featureTypes)
+        super().__init__(conf, phase)
 
     def makeCallableSequence(self) -> Generator[Callable[[np.array,TransformOptions], np.array], None, None]:
         for axis in self.axes:
