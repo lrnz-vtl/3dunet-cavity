@@ -6,7 +6,7 @@ import torch
 from pytorch3dunet.unet3d.buildingblocks import DoubleConv, ExtResNetBlock, create_encoders, \
     create_decoders
 from pytorch3dunet.unet3d.utils import number_of_features_per_level
-from pytorch3dunet.augment.featurizer import BaseFeatureList
+from pytorch3dunet.datasets.featurizer import BaseFeatureList
 
 
 class Abstract3DUNet(nn.Module):

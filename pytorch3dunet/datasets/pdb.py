@@ -9,58 +9,13 @@ from pytorch3dunet.augment.transforms import SampleStats
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
     default_prediction_collate
 from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
-from pytorch3dunet.unet3d.utils import get_logger, profile
+from pytorch3dunet.unet3d.utils import get_logger
 import uuid
 from torch.utils.data._utils.collate import default_collate
-from pytorch3dunet.augment.featurizer import BaseFeatureList, get_features
+from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features
 
 logger = get_logger('PdbDataset')
 lock = Lock()
-
-def apbsInput(pqr_fname, grid_fname, dielec_const, grid_size):
-    return f"""read
-    mol pqr {pqr_fname}
-end
-elec name prot
-    mg-manual
-    mol 1
-    dime {grid_size} {grid_size} {grid_size}
-    grid 1.0 1.0 1.0
-    gcent mol 1
-    lpbe
-    bcfl mdh
-    ion charge 1 conc 0.100 radius 2.0
-    ion charge -1 conc 0.100 radius 2.0
-    pdie {dielec_const}
-    sdie 78.54
-    sdens 10.0
-    chgm spl2
-    srfm smol
-    srad 0.0
-    swin 0.3
-    temp 298.15
-    calcenergy total
-    calcforce no
-    write pot gz {grid_fname}
-end"""
-
-
-class DataPaths:
-    def __init__(self, h5_path, pdb_path=None, pocket_path=None, grid_path=None):
-        self.h5_path = h5_path
-
-        if pdb_path is not None and os.path.exists(pdb_path):
-            self.pdb_path = str(pdb_path)
-        else:
-            self.pdb_path = None
-        if pocket_path is not None and os.path.exists(pocket_path):
-            self.pocket_path = str(pocket_path)
-        else:
-            self.pocket_path = None
-        if grid_path is not None and os.path.exists(grid_path):
-            self.grid_path = str(grid_path)
-        else:
-            self.grid_path = None
 
 
 class AbstractDataset(ConfigDataset):
@@ -69,7 +24,9 @@ class AbstractDataset(ConfigDataset):
     patch by patch with a given stride.
     """
 
-    def __init__(self, raws, labels, weight_maps, tmp_data_folder,
+    def __init__(self, raws, labels, weight_maps,
+                 featuresTypes,
+                 tmp_data_folder,
                  phase,
                  slice_builder_config,
                  transformer_config,
@@ -87,10 +44,9 @@ class AbstractDataset(ConfigDataset):
         :param a number between (0, 1]: specifies a fraction of ground truth instances to be sampled from the dense ground truth labels
         """
         self.tmp_data_folder = tmp_data_folder
-
         self.h5path = Path(self.tmp_data_folder) / f'grids.h5'
-
         self.hasWeights = weight_maps is not None
+        self.featureTypes = featuresTypes
 
         assert phase in ['train', 'val', 'test']
         if phase in ['train', 'val']:
@@ -153,7 +109,6 @@ class AbstractDataset(ConfigDataset):
         self.label_slices = slice_builder.label_slices
         self.weight_slices = slice_builder.weight_slices
 
-        # TODO Only cache to file for validation dataset
         with h5py.File(self.h5path, 'w') as h5:
             h5.create_dataset('raws', data=raws)
             if labels is not None:
@@ -174,7 +129,6 @@ class AbstractDataset(ConfigDataset):
         if idx >= len(self):
             raise StopIteration
 
-        # TODO This is inefficient with patches
         with h5py.File(self.h5path, 'r') as h5:
             raws = list(h5['raws'])
 
@@ -189,7 +143,6 @@ class AbstractDataset(ConfigDataset):
                     raw_idx = raw_idx[1:]
                 return (raw_patch_transformed, raw_idx)
             else:
-                # TODO Check me
                 labels = list(np.array(h5['labels']).astype("<f8"))
                 # get the slice for a given index 'idx'
                 label_idx = self.label_slices[idx]
@@ -203,12 +156,11 @@ class AbstractDataset(ConfigDataset):
                 # return the transformed raw and label patches
                 return (raw_patch_transformed, label_patch_transformed)
 
-    @staticmethod
-    def _transform_patches(datasets, label_idx, transformer):
+    def _transform_patches(self, datasets, label_idx, transformer):
         transformed_patches = []
         for dataset in datasets:
             # get the label data and apply the label transformer
-            transformed_patch = transformer(dataset[label_idx])
+            transformed_patch = transformer(dataset[label_idx], self.featuresTypes)
             transformed_patches.append(transformed_patch)
 
         # if transformed_patches is a singleton list return the first element only
@@ -297,6 +249,7 @@ class StandardPDBDataset(AbstractDataset):
         weight_maps = None
 
         super().__init__(raws, labels, weight_maps,
+                         featuresTypes=features.feature_types,
                          tmp_data_folder=tmp_data_folder,
                          phase=phase,
                          slice_builder_config=slice_builder_config,

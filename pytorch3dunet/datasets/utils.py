@@ -189,7 +189,6 @@ def get_class(class_name, modules):
 
 def _loader_classes(class_name):
     modules = [
-        'pytorch3dunet.datasets.hdf5',
         'pytorch3dunet.datasets.pdb',
         'pytorch3dunet.datasets.utils'
     ]
@@ -227,7 +226,7 @@ def get_train_loaders(config):
     # get dataset class
     dataset_cls_str = loaders_config.get('dataset', None)
     if dataset_cls_str is None:
-        dataset_cls_str = 'StandardHDF5Dataset'
+        dataset_cls_str = 'StandardPdbDataset'
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
 
     dataset_class : ConfigDataset = _loader_classes(dataset_cls_str)

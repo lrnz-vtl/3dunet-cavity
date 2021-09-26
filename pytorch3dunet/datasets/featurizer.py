@@ -2,14 +2,13 @@ import importlib
 import numpy as np
 import openbabel.pybel
 import prody
-from abc import ABCMeta, abstractmethod
 import itertools
 from typing import List
 import tfbio.data
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
 import typing
-from typing import Dict, Union, Optional, TypeVar, Generic, TypedDict, Type
+from abc import ABC, abstractmethod
 
 logger = get_logger('Featurizer')
 
@@ -51,9 +50,15 @@ class ApbsGridCollection:
         del self.grids
 
 
-class BaseFeatureList:
-    __metaclass__ = ABCMeta
+class Transformable(ABC):
+    pass
 
+
+class LabelClass(Transformable):
+    pass
+
+
+class BaseFeatureList(Transformable, ABC):
     @property
     @abstractmethod
     def feature_types(self) -> List[type]:
@@ -190,10 +195,16 @@ class ComposedFeatures(BaseFeatureList):
         return list(itertools.chain.from_iterable((ft.getDielecConstList() for ft in self.fts)))
 
 
+def get_feature_cls(name):
+    m = importlib.import_module('pytorch3dunet.datasets.featurizer')
+    ft_class = getattr(m, name)
+    return ft_class
+
+
 def get_features(configs):
 
     def _create_feature(config):
-        m = importlib.import_module('pytorch3dunet.augment.featurizer')
+        m = importlib.import_module('pytorch3dunet.datasets.featurizer')
         ft_class = getattr(m, config['name'])
         return ft_class(**config)
 

@@ -4,8 +4,7 @@ from openbabel import openbabel
 import prody as pr
 from pytorch3dunet.unet3d.utils import get_logger
 import subprocess
-import pytorch3dunet.augment.featurizer as featurizer
-from pytorch3dunet.augment.featurizer import ApbsGridCollection, BaseFeatureList
+from pytorch3dunet.datasets.featurizer import ApbsGridCollection, BaseFeatureList
 from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
@@ -208,7 +207,7 @@ class PdbDataHandler:
             os.remove(tmp_pred_path)
             return ret
 
-    def getRawsLabels(self, features : BaseFeatureList, grid_config):
+    def getRawsLabels(self, features: BaseFeatureList, grid_config):
         ''' This also populates the self.grid variable '''
         grid_size = grid_config.get('grid_size', grid_size_default)
 
