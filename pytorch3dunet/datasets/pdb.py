@@ -1,6 +1,6 @@
 import os
+from multiprocessing import Lock, Pool, cpu_count
 from pathlib import Path
-from multiprocessing import Lock, Pool
 import h5py
 import numpy as np
 import glob
@@ -12,7 +12,6 @@ from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
 from pytorch3dunet.unet3d.utils import get_logger, profile
 import uuid
 from torch.utils.data._utils.collate import default_collate
-from pytorch3dunet.augment.featurizer import BaseFeatureList, get_features
 
 logger = get_logger('PdbDataset')
 lock = Lock()
@@ -68,6 +67,10 @@ class AbstractDataset(ConfigDataset):
     Implementation of torch.utils.data.Dataset backed by the HDF5 files, which iterates over the raw and label datasets
     patch by patch with a given stride.
     """
+
+    @classmethod
+    def create_datasets(cls, dataset_config, phase):
+        raise NotImplementedError
 
     def __init__(self, raws, labels, weight_maps, tmp_data_folder,
                  phase,
@@ -241,7 +244,7 @@ class StandardPDBDataset(AbstractDataset):
                  slice_builder_config,
                  pregrid_transformer_config,
                  grid_config,
-                 features: BaseFeatureList,
+                 features_config,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
                  instance_ratio=None,
@@ -280,7 +283,7 @@ class StandardPDBDataset(AbstractDataset):
                                                  reuse_grids=reuse_grids
                                                  )
 
-            raws, labels = self.pdbDataHandler.getRawsLabels(features=features, grid_config=grid_config)
+            raws, labels = self.pdbDataHandler.getRawsLabels(features_config=features_config, grid_config=grid_config)
             allowRotations = self.pdbDataHandler.checkRotations()
 
         except Exception as e:
@@ -328,7 +331,7 @@ class StandardPDBDataset(AbstractDataset):
 
 
     @classmethod
-    def create_datasets(cls, dataset_config, features_config, phase):
+    def create_datasets(cls, dataset_config, phase):
         phase_config = dataset_config[phase]
 
         logger.info(f"Slice builder config: {phase_config['slice_builder']}")
@@ -336,7 +339,7 @@ class StandardPDBDataset(AbstractDataset):
         file_paths = phase_config['file_paths']
         file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
-        args = [(file_path, name, dataset_config, phase, features_config) for file_path, name in file_paths]
+        args = [(file_path, name, dataset_config, phase) for file_path, name in file_paths]
 
         pdb_workers = dataset_config.get('pdb_workers', 0)
 
@@ -348,15 +351,14 @@ class StandardPDBDataset(AbstractDataset):
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
 def create_dataset(arg):
-    file_path, name, dataset_config, phase, feature_config = arg
+    file_path, name, dataset_config, phase = arg
     phase_config = dataset_config[phase]
-
-    features : BaseFeatureList = get_features(feature_config)
 
     # load data augmentation configuration
     transformer_config = phase_config['transformer']
     pregrid_transformer_config = phase_config.get('pdb_transformer', [])
     grid_config = dataset_config.get('grid_config', {})
+    features_config = dataset_config.get('featurizer', [])
 
     # load slice builder config
     slice_builder_config = phase_config['slice_builder']
@@ -374,7 +376,7 @@ def create_dataset(arg):
                                      exe_config=exe_config,
                                      phase=phase,
                                      slice_builder_config=slice_builder_config,
-                                     features=features,
+                                     features_config=features_config,
                                      transformer_config=transformer_config,
                                      pregrid_transformer_config=pregrid_transformer_config,
                                      grid_config=grid_config,

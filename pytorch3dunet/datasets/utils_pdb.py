@@ -5,14 +5,13 @@ import prody as pr
 from pytorch3dunet.unet3d.utils import get_logger
 import subprocess
 import pytorch3dunet.augment.featurizer as featurizer
-from pytorch3dunet.augment.featurizer import ApbsGridCollection, BaseFeatureList
+from pytorch3dunet.augment.featurizer import Grid
 from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
 from potsim2 import PotGrid
 import typing
 import importlib
-from openbabel.pybel import readfile, Molecule
 
 miniball_spec = importlib.util.find_spec("miniball")
 if miniball_spec is not None:
@@ -20,7 +19,7 @@ if miniball_spec is not None:
 
 logger = get_logger('UtilsPdb')
 
-
+dielec_const_default = 4.0
 grid_size_default = 161
 ligand_mask_radius_defaults = 6.5
 
@@ -97,7 +96,7 @@ class PdbDataHandler:
         self.tmp_data_folder = tmp_data_folder
         self.pdb2pqrPath = pdb2pqrPath
         self.cleanup = cleanup
-        self.apbsGrids = None
+        self.grids = None
         self.reuse_grids = reuse_grids
 
         # Serialise structure to file, needed for pickling
@@ -124,18 +123,20 @@ class PdbDataHandler:
         structure, _ = self.getStructureLigand()
         coords = np.array(list(structure.getCoords()))
 
+        grid: Grid = next(iter(self.grids.values()))
+
         if miniball_spec is not None:
             mb = miniball.Miniball(coords)
             C = mb.center()
             R = np.sqrt(mb.squared_radius())
 
-            if R > self.apbsGrids.grid_size / 2:
+            if R > grid.grid_size / 2:
                 logger.warn(f'{self.name} cannot fit in a ball, R = {R}, C = {C}. Rotations will be turned off')
                 return False
 
-        CubeC = np.array([(e[-1] + e[0]) / 2 for e in self.apbsGrids.edges])
+        CubeC = np.array([(e[-1] + e[0]) / 2 for e in grid.edges])
         dists = np.sqrt(((coords - CubeC) ** 2).sum(axis=1))
-        if max(dists) > self.apbsGrids.grid_size / 2:
+        if max(dists) > grid.grid_size / 2:
             logger.warn(f'{self.name} should be centered better in the cube. Rotations will be disallowed')
             return False
 
@@ -143,9 +144,6 @@ class PdbDataHandler:
 
     def getStructureLigand(self):
         return pr.parsePDB(self.structure_fname), pr.parsePDB(self.ligand_fname)
-
-    def getMol(self) -> Molecule:
-        return next(readfile('pdb', self.structure_fname))
 
     def genPocket(self):
         """
@@ -165,11 +163,12 @@ class PdbDataHandler:
     def makePdbPrediction(self, pred, expandResidues=True):
 
         structure, _ = self.getStructureLigand()
+        grid: Grid = next(iter(self.grids.values()))
 
         if pred.ndim == 4:
             assert len(pred)==1
             pred = pred[0]
-        if pred.shape != self.apbsGrids.shape:
+        if pred.shape != grid.shape:
             raise ValueError("pred.shape != grid.shape. Are you trying to make a pocket prediction from slices? "
                              "That is currently not supported")
 
@@ -178,9 +177,9 @@ class PdbDataHandler:
 
         for i, coord in enumerate(structure.getCoords()):
             x, y, z = coord
-            binx = int((x - min(self.apbsGrids.edges[0])) / self.apbsGrids.delta[0])
-            biny = int((y - min(self.apbsGrids.edges[1])) / self.apbsGrids.delta[1])
-            binz = int((z - min(self.apbsGrids.edges[2])) / self.apbsGrids.delta[2])
+            binx = int((x - min(grid.edges[0])) / grid.delta[0])
+            biny = int((y - min(grid.edges[1])) / grid.delta[1])
+            binz = int((z - min(grid.edges[2])) / grid.delta[2])
 
             # if binx >= grid.shape[0] or biny >= grid.shape[1] or binz >= grid.shape[2]:
             #     logger.warn("predbin out of bounds")
@@ -208,28 +207,33 @@ class PdbDataHandler:
             os.remove(tmp_pred_path)
             return ret
 
-    def getRawsLabels(self, features : BaseFeatureList, grid_config):
+    def getRawsLabels(self, features_config, grid_config):
         ''' This also populates the self.grid variable '''
         grid_size = grid_config.get('grid_size', grid_size_default)
 
-        structure, ligand = self.getStructureLigand()
-        # A different format
-        mol: Molecule = self.getMol()
+        features_config2 = []
+        for x in features_config:
+            y = dict(x)
+            if x['name'] == 'PotentialGrid' and 'dielec_const' not in x:
+                y['dielec_const'] = dielec_const_default
+            features_config2.append(y)
 
-        dielec_const_list = features.getDielecConstList()
+        structure, ligand = self.getStructureLigand()
+
+        dielec_const_list = [x['dielec_const'] for x in features_config2 if x['name']=='PotentialGrid']
         pot_grids, labels = self._genGrids(structure, ligand, grid_config, dielec_const_list)
 
-        self.apbsGrids = ApbsGridCollection(pot_grids, grid_size)
-        labels = self.apbsGrids.homologate_labels(labels)
+        self.grids = {dielec_const: Grid(pot_grid, grid_size) for dielec_const, pot_grid in pot_grids.items()}
+        labels = next(iter(self.grids.values())).homologate_labels(labels)
 
-#        features = featurizer.get_featurizer(features_config2).raw_transform()
-        raws = features(structure, mol, self.apbsGrids)
-
-        self.apbsGrids.delGrids()
-
+        features = featurizer.get_featurizer(features_config2).raw_transform()
+        raws = features(structure, self.grids)
+        for grid in self.grids.values():
+            grid.delGrid()
         return raws, labels
 
     def _randomRotatePdb(self, structure, ligand):
+        # Todo Init seed?
         m = Rotation.random()
 
         r = m.as_matrix()
