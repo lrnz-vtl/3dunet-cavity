@@ -342,6 +342,8 @@ class UNet3DTrainer:
                 # adjust learning rate if necessary
                 if isinstance(self.scheduler, ReduceLROnPlateau):
                     self.scheduler.step(eval_score)
+                elif self.scheduler is None:
+                    pass
                 else:
                     self.scheduler.step()
                 # log current learning rate in tensorboard
