@@ -36,7 +36,7 @@ class SliceBuilder:
     Builds the position of the patches in a given raw/label/weight ndarray based on the the patch and stride shape
     """
 
-    def __init__(self, raw_datasets, label_datasets, weight_dataset, patch_shape, stride_shape, **kwargs):
+    def __init__(self, raw_dataset, label_dataset, weight_dataset, patch_shape, stride_shape, **kwargs):
         """
         :param raw_datasets: ndarray of raw data
         :param label_datasets: ndarray of ground truth labels
@@ -52,12 +52,12 @@ class SliceBuilder:
         if not skip_shape_check:
             self._check_patch_shape(patch_shape)
 
-        self._raw_slices = self._build_slices(raw_datasets[0], patch_shape, stride_shape)
-        if label_datasets is None:
+        self._raw_slices = self._build_slices(raw_dataset, patch_shape, stride_shape)
+        if label_dataset is None:
             self._label_slices = None
         else:
             # take the first element in the label_datasets to build slices
-            self._label_slices = self._build_slices(label_datasets[0], patch_shape, stride_shape)
+            self._label_slices = self._build_slices(label_dataset, patch_shape, stride_shape)
             assert len(self._raw_slices) == len(self._label_slices)
         if weight_dataset is None:
             self._weight_slices = None
@@ -88,10 +88,8 @@ class SliceBuilder:
             [(slice, slice, slice), ...] if len(shape) == 3
         """
         slices = []
-        if dataset.ndim == 4:
-            in_channels, i_z, i_y, i_x = dataset.shape
-        else:
-            i_z, i_y, i_x = dataset.shape
+        assert dataset.ndim == 4
+        in_channels, i_z, i_y, i_x = dataset.shape
 
         k_z, k_y, k_x = patch_shape
         s_z, s_y, s_x = stride_shape
@@ -102,12 +100,11 @@ class SliceBuilder:
                 x_steps = SliceBuilder._gen_indices(i_x, k_x, s_x)
                 for x in x_steps:
                     slice_idx = (
+                        slice(0, in_channels),
                         slice(z, z + k_z),
                         slice(y, y + k_y),
                         slice(x, x + k_x)
                     )
-                    if dataset.ndim == 4:
-                        slice_idx = (slice(0, in_channels),) + slice_idx
                     slices.append(slice_idx)
         return slices
 
@@ -130,7 +127,7 @@ class TrivialSliceBuilder:
     Builds the position of the patches in a given raw/label/weight ndarray based on the the patch and stride shape
     """
 
-    def __init__(self, raw_datasets, label_datasets, weight_dataset, **kwargs):
+    def __init__(self, raw_dataset, label_dataset, weight_dataset, **kwargs):
         """
         :param raw_datasets: ndarray of raw data
         :param label_datasets: ndarray of ground truth labels
@@ -140,19 +137,17 @@ class TrivialSliceBuilder:
         :param kwargs: additional metadata
         """
 
-        skip_shape_check = kwargs.get('skip_shape_check', False)
-
-        self._raw_slices = self._build_slices(raw_datasets[0])
-        if label_datasets is None:
+        self._raw_slices = self._build_slices(raw_dataset)
+        if label_dataset is None:
             self._label_slices = None
         else:
             # take the first element in the label_datasets to build slices
-            self._label_slices = self._build_slices(label_datasets[0])
+            self._label_slices = self._build_slices(label_dataset)
             assert len(self._raw_slices) == len(self._label_slices)
         if weight_dataset is None:
             self._weight_slices = None
         else:
-            self._weight_slices = self._build_slices(weight_dataset[0])
+            self._weight_slices = self._build_slices(weight_dataset)
             assert len(self.raw_slices) == len(self._weight_slices)
 
     @property
@@ -169,12 +164,9 @@ class TrivialSliceBuilder:
 
     @staticmethod
     def _build_slices(dataset):
-        if dataset.ndim == 4:
-            in_channels, i_z, i_y, i_x = dataset.shape
-        else:
-            i_z, i_y, i_x = dataset.shape
-        slices = [(slice(0,i_z),slice(0,i_y),slice(0,i_x))]
-        return slices
+        assert dataset.ndim == 4
+        in_channels, i_z, i_y, i_x = dataset.shape
+        return [(slice(0, in_channels), slice(0,i_z),slice(0,i_y),slice(0,i_x))]
 
 
 def get_class(class_name, modules):

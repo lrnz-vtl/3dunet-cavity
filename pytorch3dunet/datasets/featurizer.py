@@ -3,11 +3,10 @@ import numpy as np
 import openbabel.pybel
 import prody
 import itertools
-from typing import List
+from typing import List, Type, Iterable, Mapping
 import tfbio.data
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
-import typing
 from abc import ABC, abstractmethod
 
 logger = get_logger('Featurizer')
@@ -18,7 +17,7 @@ GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 class ApbsGridCollection:
     """ Custom class representing a single electric potential grid """
-    def __init__(self, pot_grids: typing.Dict[float, PotGrid], grid_size):
+    def __init__(self, pot_grids: Mapping[float, PotGrid], grid_size):
         """
         pot_grids: Mapping dielectric constant -> PotGrid
         """
@@ -51,14 +50,7 @@ class ApbsGridCollection:
 
 
 class Transformable(ABC):
-    pass
 
-
-class LabelClass(Transformable):
-    pass
-
-
-class BaseFeatureList(Transformable, ABC):
     @property
     @abstractmethod
     def feature_types(self) -> List[type]:
@@ -74,8 +66,26 @@ class BaseFeatureList(Transformable, ABC):
     def names(self) -> List[str]:
         pass
 
+
+class LabelClass(Transformable):
+
+    num_features = 1
+
+    @property
+    def feature_types(self) -> List[type]:
+        return [type(self)]
+
+    @property
+    def names(self):
+        return [type(self).__name__]
+
+    def __init__(self, **kwargs):
+        pass
+
+class BaseFeatureList(Transformable, ABC):
+
     @abstractmethod
-    def call(self, structure:prody.AtomGroup, mol:openbabel.pybel.Molecule, grids: ApbsGridCollection) -> typing.List[np.array]:
+    def call(self, structure:prody.AtomGroup, mol:openbabel.pybel.Molecule, grids: ApbsGridCollection) -> List[np.array]:
         raise NotImplementedError
 
     def __call__(self, *args) -> List[np.array]:
@@ -195,13 +205,13 @@ class ComposedFeatures(BaseFeatureList):
         return list(itertools.chain.from_iterable((ft.getDielecConstList() for ft in self.fts)))
 
 
-def get_feature_cls(name):
+def get_feature_cls(name) -> Type[Transformable]:
     m = importlib.import_module('pytorch3dunet.datasets.featurizer')
     ft_class = getattr(m, name)
     return ft_class
 
 
-def get_features(configs):
+def get_features(configs) -> ComposedFeatures:
 
     def _create_feature(config):
         m = importlib.import_module('pytorch3dunet.datasets.featurizer')

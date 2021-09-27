@@ -4,15 +4,17 @@ from multiprocessing import Lock, Pool
 import h5py
 import numpy as np
 import glob
-import pytorch3dunet.augment.transforms as transforms
+from pytorch3dunet.augment.utils import Transformer
+from pytorch3dunet.augment.transforms import Transform, Phase
 from pytorch3dunet.augment.standardize import Stats
-from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
+from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, sample_instances, \
     default_prediction_collate
 from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
 from pytorch3dunet.unet3d.utils import get_logger
 import uuid
 from torch.utils.data._utils.collate import default_collate
-from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features
+from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features, Transformable, LabelClass, ComposedFeatures
+from typing import Iterable, Type
 
 logger = get_logger('PdbDataset')
 lock = Lock()
@@ -24,10 +26,10 @@ class AbstractDataset(ConfigDataset):
     patch by patch with a given stride.
     """
 
-    def __init__(self, raws, labels, weight_maps,
-                 featuresTypes,
+    def __init__(self, raws:np.ndarray, labels:np.ndarray, weight_maps,
+                 featuresTypes: Iterable[Type[Transformable]],
                  tmp_data_folder,
-                 phase,
+                 phase: Phase,
                  slice_builder_config,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
@@ -46,10 +48,11 @@ class AbstractDataset(ConfigDataset):
         self.tmp_data_folder = tmp_data_folder
         self.h5path = Path(self.tmp_data_folder) / f'grids.h5'
         self.hasWeights = weight_maps is not None
-        self.featureTypes = featuresTypes
+        self.featureTypes: Iterable[Type[Transformable]] = featuresTypes
 
-        assert phase in ['train', 'val', 'test']
-        if phase in ['train', 'val']:
+        labels = np.expand_dims(labels, axis=0)
+
+        if phase in [Phase.TRAIN, phase.VAL]:
             mirror_padding = None
 
         if mirror_padding is not None:
@@ -66,21 +69,22 @@ class AbstractDataset(ConfigDataset):
         self.stats = Stats(raws)
         # min_value, max_value, mean, std = self.ds_stats(raws)
 
-        self.transformer = transforms.get_transformer(transformer_config, allowRotations=allowRotations,
-                                                      debug_str=debug_str, stats=self.stats)
-        self.raw_transform = self.transformer.raw_transform()
+        self.transformer = Transformer(transformer_config=transformer_config, common_config={},
+                                       allowRotations=allowRotations, debug_str=debug_str, stats=self.stats)
+        self.raw_transform = self.transformer.create_transform(self.phase)
 
-        if phase != 'test':
+        if phase != Phase.TEST:
             # create label/weight transform only in train/val phase
-            self.label_transform = self.transformer.label_transform()
+            self.label_transform = self.transformer.create_transform(self.phase)
 
             if self.instance_ratio is not None:
+                raise NotImplementedError("self.instance_ratio path is not implemented")
                 assert 0 < self.instance_ratio <= 1
                 rs = np.random.RandomState(random_seed)
                 labels = [sample_instances(m, self.instance_ratio, rs) for m in labels]
 
             if self.hasWeights:
-                self.weight_transform = self.transformer.weight_transform()
+                self.weight_transform = self.transformer.create_transform(self.phase)
 
             self._check_dimensionality(raws, labels)
         else:
@@ -89,19 +93,13 @@ class AbstractDataset(ConfigDataset):
 
             # add mirror padding if needed
             if self.mirror_padding is not None:
+                raise NotImplementedError('mirror_padding branch of the code has not been tested')
                 z, y, x = self.mirror_padding
                 pad_width = ((z, z), (y, y), (x, x))
-                padded_volumes = []
-                for raw in raws:
-                    if raw.ndim == 4:
-                        channels = [np.pad(r, pad_width=pad_width, mode='reflect') for r in raw]
-                        padded_volume = np.stack(channels)
-                    else:
-                        padded_volume = np.pad(raw, pad_width=pad_width, mode='reflect')
+                channels = [np.pad(r, pad_width=pad_width, mode='reflect') for r in raw]
+                padded_volume = np.stack(channels)
 
-                    padded_volumes.append(padded_volume)
-
-                raws = padded_volumes
+                raws = padded_volume
 
         # build slice indices for raw and label data sets
         slice_builder = get_slice_builder(raws, labels, weight_maps, slice_builder_config)
@@ -119,35 +117,30 @@ class AbstractDataset(ConfigDataset):
         self.patch_count = len(self.raw_slices)
         logger.info(f'Number of patches: {self.patch_count}')
 
-    def ds_stats(self, raws):
-        # calculate global min, max, mean and std for normalization
-        min_value, max_value, mean, std = calculate_stats(raws)
-        logger.info(f'Input stats: min={min_value}, max={max_value}, mean={mean}, std={std}')
-        return min_value, max_value, mean, std
-
     def __getitem__(self, idx):
         if idx >= len(self):
             raise StopIteration
 
         with h5py.File(self.h5path, 'r') as h5:
-            raws = list(h5['raws'])
+            raws = np.array(h5['raws'])
 
             # get the slice for a given index 'idx'
             raw_idx = self.raw_slices[idx]
             # get the raw data patch for a given slice
-            raw_patch_transformed = self._transform_patches(raws, raw_idx, self.raw_transform)
+            raw_patch_transformed = self.raw_transform(raws[raw_idx], self.featureTypes)
 
-            if self.phase == 'test':
+            if self.phase == Phase.TEST:
                 # discard the channel dimension in the slices: predictor requires only the spatial dimensions of the volume
                 if len(raw_idx) == 4:
                     raw_idx = raw_idx[1:]
                 return (raw_patch_transformed, raw_idx)
             else:
-                labels = list(np.array(h5['labels']).astype("<f8"))
+                labels = np.array(h5['labels']).astype("<f8")
                 # get the slice for a given index 'idx'
                 label_idx = self.label_slices[idx]
-                label_patch_transformed = self._transform_patches(labels, label_idx, self.label_transform)
+                label_patch_transformed = self.label_transform(labels[label_idx], [LabelClass])
                 if self.hasWeights:
+                    raise NotImplementedError('weights are not implemented')
                     weight_maps = h5['weight_maps']
                     weight_idx = self.weight_slices[idx]
                     # return the transformed weight map for a given patch together with raw and label data
@@ -156,44 +149,29 @@ class AbstractDataset(ConfigDataset):
                 # return the transformed raw and label patches
                 return (raw_patch_transformed, label_patch_transformed)
 
-    def _transform_patches(self, datasets, label_idx, transformer):
-        transformed_patches = []
-        for dataset in datasets:
-            # get the label data and apply the label transformer
-            transformed_patch = transformer(dataset[label_idx], self.featuresTypes)
-            transformed_patches.append(transformed_patch)
-
-        # if transformed_patches is a singleton list return the first element only
-        if len(transformed_patches) == 1:
-            return transformed_patches[0]
-        else:
-            return transformed_patches
+    def _transform_patches(self, dataset, label_idx, transformer:Transform):
+        transformed_patch = transformer(dataset[label_idx], self.featureTypes)
+        return transformed_patch
 
     def __len__(self):
         return self.patch_count
 
     @staticmethod
     def _check_dimensionality(raws, labels):
-        def _volume_shape(volume):
-            if volume.ndim == 3:
-                return volume.shape
-            return volume.shape[1:]
+        assert raws.ndim == 4
+        assert labels.ndim == 4
 
-        for raw, label in zip(raws, labels):
-            assert raw.ndim in [3, 4], 'Raw dataset must be 3D (DxHxW) or 4D (CxDxHxW)'
-            assert label.ndim in [3, 4], 'Label dataset must be 3D (DxHxW) or 4D (CxDxHxW)'
-
-            assert _volume_shape(raw) == _volume_shape(label), 'Raw and labels have to be of the same size'
+        assert raws.shape[1:] == labels.shape[1:]
 
 
 class StandardPDBDataset(AbstractDataset):
 
     def __init__(self, src_data_folder, name, exe_config,
-                 phase,
+                 phase:str,
                  slice_builder_config,
                  pregrid_transformer_config,
                  grid_config,
-                 features: BaseFeatureList,
+                 features: ComposedFeatures,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
                  instance_ratio=None,
@@ -205,15 +183,16 @@ class StandardPDBDataset(AbstractDataset):
         self.src_data_folder = src_data_folder
         self.name = name
 
-        assert phase in ['train', 'val', 'test']
+        phase = Phase.from_str(phase)
 
         if randomize_name:
+            uuids = None
             if reuse_grids:
                 existing = list(glob.glob(str(Path(exe_config['tmp_folder']) / f"{name}_*")))
                 if len(existing) > 0:
                     uuids = existing[0].split('_')[-1]
                     logger.info(f'Reusing existing uuid={uuids}')
-            else:
+            if uuids is None:
                 uuids = uuid.uuid1()
             tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
 
@@ -241,11 +220,8 @@ class StandardPDBDataset(AbstractDataset):
         self.ndim = raws.ndim
         self.shape = raws.shape
 
-        raws = [raws]
         if phase == 'test':
             labels = None
-        else:
-            labels = [labels]
         weight_maps = None
 
         super().__init__(raws, labels, weight_maps,
@@ -305,7 +281,7 @@ def create_dataset(arg):
     phase_config = dataset_config[phase]
     fail_on_error = dataset_config.get('fail_on_error', False)
 
-    features: BaseFeatureList = get_features(feature_config)
+    features: ComposedFeatures = get_features(feature_config)
 
     # load data augmentation configuration
     pregrid_transformer_config = phase_config.get('pdb_transformer', [])

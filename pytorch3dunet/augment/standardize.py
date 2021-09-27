@@ -5,7 +5,6 @@ from pytorch3dunet.datasets.featurizer import Transformable, PotentialGrid
 from typing import Type, Mapping, Iterable, Any, Callable
 import numpy as np
 
-
 class Stats:
     mean: np.ndarray
     std: np.ndarray
@@ -13,7 +12,8 @@ class Stats:
     def __init__(self, raws:np.ndarray):
         assert raws.ndim == 4
         self.mean = raws.mean(axis=(1,2,3))
-        pass
+        self.std = raws.std(axis=(1, 2, 3))
+        logger.debug(f'mean={self.mean}, std={self.mean}')
 
 @dataclass(frozen=True)
 class StandardizeGlobalOptions(TransformOptions):
@@ -33,6 +33,10 @@ class Standardize(LocalTransform):
     """
     Apply Z-score normalization to a given input tensor, i.e. re-scaling the values to be 0-mean and 1-std.
     """
+
+    @classmethod
+    def is_rotation(cls):
+        return False
 
     @classmethod
     def local_option_type(cls) -> Type[TransformOptions]:

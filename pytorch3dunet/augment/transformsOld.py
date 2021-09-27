@@ -56,7 +56,6 @@ class SampleStats:
 
 
 
-
 class BaseTransform(ABC):
     @abstractmethod
     def __call__(self, m):

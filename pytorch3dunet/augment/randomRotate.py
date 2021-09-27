@@ -34,6 +34,14 @@ class RotateLocalOptions(TransformOptions):
 class RandomRotate3D(LocalTransform):
 
     @classmethod
+    def local_option_type(cls) -> Type[TransformOptions]:
+        return RotateLocalOptions
+
+    @classmethod
+    def is_rotation(cls):
+        return True
+
+    @classmethod
     def default_local_options(cls, phase: Phase, ft: Type[Transformable]) -> SkippableTransformOptions:
         return {
             'LabelClass': RotateLocalOptions(mode='constant'),

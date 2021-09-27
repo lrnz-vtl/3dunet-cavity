@@ -8,12 +8,12 @@ import torch
 import numpy as np
 from pytorch3dunet.unet3d.utils import get_logger
 import inspect
-import importlib
 
 MAX_SEED = 2 ** 32 - 1
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 logger = get_logger('Transformer')
+
 
 class PicklableGenerator(torch.Generator):
     def __getstate__(self):
@@ -63,7 +63,7 @@ class SkippableTransformOptions(ABC):
     def skipped() -> bool:
         pass
 
-dataclass(frozen=True)
+@dataclass(frozen=True)
 class TransformOptions(SkippableTransformOptions, ABC):
     skipped = False
     def serialize(self):
@@ -74,7 +74,16 @@ class SkippedTransform(SkippableTransformOptions):
     def serialize(self):
         return 'Skipped'
 
-class BaseTransform(ABC):
+class Transform(ABC):
+    @abstractmethod
+    def __call__(self, m: np.ndarray, featureTypes: Iterable[Type[Transformable]]) -> np.ndarray:
+        pass
+
+class BaseTransform(Transform, ABC):
+    @classmethod
+    @abstractmethod
+    def is_rotation(cls) -> bool:
+        pass
 
     @classmethod
     @abstractmethod
@@ -121,7 +130,7 @@ class BaseTransform(ABC):
     def validate_options(cls, options_conf: Mapping[str, Mapping[str, Any]]):
         return cls.validate_global_options(options_conf)
 
-    def __init__(self, options_conf: Mapping[str, Any], phase: Phase):
+    def __init__(self, options_conf: Mapping[str, Any], phase: Phase, **kwargs):
         self.global_options = self.read_global_options(options_conf,phase)
 
     def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> np.ndarray:
@@ -131,10 +140,12 @@ class BaseTransform(ABC):
         if self.global_options.skipped:
             return m
         else:
+            assert isinstance(self.global_options, TransformOptions)
             ret: np.ndarray = self._call(m, self.global_options, featureTypes)
 
         assert m.shape == ret.shape
         return ret
+
 
 
 def all_subclasses(cls):
@@ -232,7 +243,7 @@ class LocalTransform(BaseTransform, ABC):
             for c, featureType in zip(range(m.shape[0]), featureTypes):
                 opt = self.get_local_options(featureType)
                 if opt.skipped:
-                    channels.append([c])
+                    channels.append(m[c])
                 else:
                     m3d = fun(m[c], opt, c)
                     assert m3d.shape == m[c].shape
@@ -242,34 +253,23 @@ class LocalTransform(BaseTransform, ABC):
         return m
 
 
-def get_transformer_classes(config: Iterable[Mapping[str,any]], validate=False):
+class ComposedTransform(Transform, ABC):
+    def __init__(self, transformer_classes:Iterable[Type[BaseTransform]], conf_options:Iterable[Mapping[str,Any]],
+                 common_config:Mapping[str,Any], phase:Phase, seed:int, dtype=np.float32):
 
-    ret = []
+        self.dtype = dtype
+        self.transforms = []
 
-    modules = [
-        'pytorch3dunet.augment.standardize',
-        'pytorch3dunet.augment.randomRotate',
-        'pytorch3dunet.augment.globalTransforms'
-               ]
-    modules = [importlib.import_module(m) for m in modules]
+        for cls, options_conf in zip(transformer_classes,conf_options):
+            common_config = dict(common_config)
+            # FIXME Object needs to be reinitialised between epochs, all this will be always the same
+            common_config['generator'] = PicklableGenerator().manual_seed(seed)
 
-    for conf in config:
-        name = conf['name']
-        conf = {k: v for k, v in conf.items() if k != 'name'}
-        transformer_class = None
-        for m in modules:
-            try:
-                transformer_class: Type[BaseTransform] = getattr(m, name)
-                if validate:
-                    logger.info(f'{transformer_class.__name__} options: {transformer_class.validate_options(conf)}')
-                ret.append(transformer_class)
-                break
-            except AttributeError:
-                pass
+            self.transforms.append(cls(options_conf=options_conf, phase=phase, **common_config))
 
-        if transformer_class is None:
-            raise AttributeError(f"Class {name} not found in modules")
-
-    return ret
-
-
+    def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> torch.Tensor:
+        assert m.ndim == 4
+        for trans in self.transforms:
+            m = trans(m, featureTypes)
+        assert m.ndim == 4
+        return torch.from_numpy(m.astype(dtype=self.dtype))
