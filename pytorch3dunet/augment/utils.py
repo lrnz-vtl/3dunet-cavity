@@ -32,9 +32,9 @@ class Transformer:
 
             if not allowRotations and transformer_class.is_rotation():
                 logger.info(f'Removing {transformer_class.__name__} because rotation turned off')
-
-            self.transformer_classes.append(transformer_class)
-            self.conf_options.append(conf)
+            else:
+                self.transformer_classes.append(transformer_class)
+                self.conf_options.append(conf)
 
     def validate(self):
         for cls, options in zip(self.transformer_classes, self.conf_options):
@@ -52,7 +52,9 @@ class Transformer:
             raise AttributeError(f"Class {class_name} not found in modules")
         return clazz
 
-    def create_transform(self, phase: Phase):
+    def create_transform(self, phase: Phase, debug_str=''):
         ''' Needs to be called separately for raw and label '''
+        common_config = dict(self.common_config)
+        common_config['debug_str'] = common_config['debug_str'] + debug_str
         return ComposedTransform(transformer_classes=self.transformer_classes, conf_options=self.conf_options,
-                                 common_config=self.common_config, phase=phase, seed=self.seed)
+                                 common_config=common_config, phase=phase, seed=self.seed)

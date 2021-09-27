@@ -255,21 +255,41 @@ class LocalTransform(BaseTransform, ABC):
 
 class ComposedTransform(Transform, ABC):
     def __init__(self, transformer_classes:Iterable[Type[BaseTransform]], conf_options:Iterable[Mapping[str,Any]],
-                 common_config:Mapping[str,Any], phase:Phase, seed:int, dtype=np.float32):
+                 common_config:Mapping[str,Any], phase:Phase, seed:int, dtype=np.float32, convert_to_torch=True):
 
         self.dtype = dtype
+        self.convert_to_torch = convert_to_torch
         self.transforms = []
 
-        for cls, options_conf in zip(transformer_classes,conf_options):
-            common_config = dict(common_config)
-            # FIXME Object needs to be reinitialised between epochs, all this will be always the same
-            common_config['generator'] = PicklableGenerator().manual_seed(seed)
+        args = []
 
-            self.transforms.append(cls(options_conf=options_conf, phase=phase, **common_config))
+        for cls, options_conf in zip(transformer_classes,conf_options):
+            config = dict(common_config)
+            # FIXME Object needs to be reinitialised between epochs, all this will be always the same
+            config['generator'] = PicklableGenerator().manual_seed(seed)
+
+            args.append((cls, options_conf, phase, config))
+            self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
+
+        self.state = self.dtype, self.convert_to_torch, args
+
+    # FIXME This is probably bugged if we pickle after calling the first time
+    def __getstate__(self):
+        return self.state
+
+    def __setstate__(self, state):
+        logger.warn(f'Pickling the {type(self).__name__} instance - This has not been properly tested')
+        self.transforms = []
+        self.dtype, self.convert_to_torch, args = state
+        for cls, options_conf, phase, config in args:
+            self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
 
     def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> torch.Tensor:
         assert m.ndim == 4
         for trans in self.transforms:
             m = trans(m, featureTypes)
         assert m.ndim == 4
-        return torch.from_numpy(m.astype(dtype=self.dtype))
+        if self.convert_to_torch:
+            return torch.from_numpy(m.astype(dtype=self.dtype))
+        else:
+            return m

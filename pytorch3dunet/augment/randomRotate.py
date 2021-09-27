@@ -61,8 +61,9 @@ class RandomRotate3D(LocalTransform):
         return RotateGlobalOptions
 
     def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase:Phase,
-                 generator: PicklableGenerator,
+                 generator: PicklableGenerator, debug_str:str=None,
                  **kwargs):
+        self.debug_str = debug_str
         self.generator = generator
         super().__init__(options_conf, phase)
 
@@ -76,6 +77,8 @@ class RandomRotate3D(LocalTransform):
         r = Rotation.random(random_state=seed)
         angles = r.as_euler('zxy')
         axes = [(0, 1), (1, 2), (0, 2)]
+
+        logger.debug(f'Rotating with angles {angles}, {self.debug_str}')
 
         for i, (axis, angle) in enumerate(zip(axes, angles)):
             angle = angle / np.pi * 180

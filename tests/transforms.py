@@ -1,13 +1,12 @@
 import unittest
 
 import numpy as np
-
-from pytorch3dunet.augment.transforms import PicklableGenerator, Phase
+from pytorch3dunet.augment.transforms import PicklableGenerator, Phase, BaseTransform, ComposedTransform
 from pytorch3dunet.augment.standardize import Standardize, Stats
 from pytorch3dunet.augment.randomRotate import RandomRotate3D
 from pytorch3dunet.augment.globalTransforms import RandomFlip
 from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures, Transformable, get_feature_cls
-from typing import List, Type, Mapping, Any
+from typing import List, Type, Mapping, Any, Callable, Optional
 
 
 class TestTransform(unittest.TestCase):
@@ -18,7 +17,8 @@ class TestTransform(unittest.TestCase):
         config = [{'name': 'PotentialGrid'}, {'name': 'KalasantyFeatures'}, {'name': 'AtomLabel'}, {'name':'LabelClass'}]
 
         channels: ComposedFeatures = get_features(config)
-        self.channel_types: List[Type[Transformable]] = channels.feature_types
+        self.channel_types = channels.feature_types
+        assert all(issubclass(t, Transformable) for t in self.channel_types)
         assert channels.num_features == len(self.channel_types)
         self.input = np.random.random(size=(channels.num_features, self.N,self.N,self.N))
         super().__init__(*args, **kwargs)
@@ -45,26 +45,28 @@ class TestTransform(unittest.TestCase):
         else:
             raise ValueError
 
-    def _test_transform(self, cls, options_conf, expectedChange, common_config):
+    def _test_transform(self, cls:Type[BaseTransform], options_conf:Mapping, expectedChange:Mapping,
+                        common_config:Mapping, validate_fun:Optional[Callable[[np.ndarray,np.ndarray,int],bool]] = None) -> None:
         expectedChange = self._convertExpected(expectedChange)
         cls.validate_options(options_conf)
 
-        outputs = {}
-
         for phase in Phase:
-            common_config = dict(common_config)
-            common_config['generator'] = PicklableGenerator().manual_seed(self.seed)
-            transform = cls(options_conf=options_conf, phase=phase, **common_config)
-            outputs[phase] = transform(self.input, self.channel_types)
-            assert self.input.shape == outputs[phase].shape
+
+            transform = ComposedTransform(transformer_classes=[cls], conf_options=[options_conf],
+                                      common_config=common_config, phase=phase, seed=self.seed, convert_to_torch=False)
+            transform.__setstate__(transform.__getstate__())
+
+            output = transform(self.input, self.channel_types)
+            assert self.input.shape == output.shape
 
             for i,channel_type in enumerate(self.channel_types):
-                o3d = outputs[phase][i]
+                o3d = output[i]
                 i3d = self.input[i]
                 isExpectedChange = self._is_change_expected(expectedChange[phase], channel_type)
                 assert isExpectedChange != np.all(o3d == i3d), \
                     f"transform={cls.__name__}, isExpectedChange={isExpectedChange}, phase={phase}, i={i}, channel_type={channel_type}"
-        return outputs
+                if isExpectedChange and validate_fun is not None:
+                    assert validate_fun(i3d, o3d, i)
 
     def test_flip(self):
         expectedChange = {
@@ -75,7 +77,10 @@ class TestTransform(unittest.TestCase):
         options_conf = {'train': {'axis_prob': 1.0}}
         common_config = {}
         cls = RandomFlip
-        self._test_transform(cls, options_conf, expectedChange,common_config)
+        def validate_fun(i3d, o3d, idx) -> bool:
+            return np.all(np.flip(i3d,axis=0) == o3d)
+        self._test_transform(cls=cls, options_conf=options_conf, expectedChange=expectedChange,
+                             common_config=common_config, validate_fun=validate_fun)
 
     def test_standardize(self):
 
@@ -93,17 +98,14 @@ class TestTransform(unittest.TestCase):
         options_conf = {}
         common_config = {'featureStats': Stats(self.input)}
         cls = Standardize
-        outputs = self._test_transform(cls, options_conf, expectedChange, common_config)
 
-        expectedChange = self._convertExpected(expectedChange)
-        for phase in Phase:
-            for i, channel_type in enumerate(self.channel_types):
-                isExpectedChange = self._is_change_expected(expectedChange[phase], channel_type)
-                mean = outputs[phase][i].mean()
-                std = outputs[phase][i].std()
-                if isExpectedChange:
-                    assert np.isclose(mean, 0)
-                    assert np.isclose(std, 1)
+        def validate_fun(i3d, o3d, idx) -> bool:
+            mean = o3d.mean()
+            std = o3d.std()
+            return np.all(np.isclose(mean, 0)) and np.all(np.isclose(std, 1))
+        self._test_transform(cls=cls, options_conf=options_conf, expectedChange=expectedChange,
+                             common_config=common_config, validate_fun=validate_fun)
+
 
     def test_rotate(self):
         expectedChange = {
@@ -156,9 +158,6 @@ class TestOptions(unittest.TestCase):
         Standardize.validate_options(options_conf={})
         RandomRotate3D.validate_options(options_conf={})
         RandomFlip.validate_options(options_conf={})
-
-
-
 
 
 

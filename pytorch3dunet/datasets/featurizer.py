@@ -133,7 +133,7 @@ class AtomLabel(BaseFeatureList):
         return [type(self).__name__]
 
     def __init__(self, **kwargs):
-        pass
+        self.warned_small_grid = False
 
     def call(self, structure, mol, grids):
         retgrid = np.zeros(shape=grids.shape)
@@ -144,7 +144,11 @@ class AtomLabel(BaseFeatureList):
             biny = int((y - min(grids.edges[1])) / grids.delta[1])
             binz = int((z - min(grids.edges[2])) / grids.delta[2])
 
-            retgrid[binx, biny, binz] = 1
+            if binx < grids.shape[0] and biny < grids.shape[1] and binz < grids.shape[2]:
+                retgrid[binx, biny, binz] = 1
+            elif not self.warned_small_grid:
+                logger.warn("Using small grid size so discarding data!")
+                self.warned_small_grid = True
 
         return [retgrid]
 

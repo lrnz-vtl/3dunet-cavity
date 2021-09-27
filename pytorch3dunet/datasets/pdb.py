@@ -71,11 +71,11 @@ class AbstractDataset(ConfigDataset):
 
         self.transformer = Transformer(transformer_config=transformer_config, common_config={},
                                        allowRotations=allowRotations, debug_str=debug_str, stats=self.stats)
-        self.raw_transform = self.transformer.create_transform(self.phase)
+        self.raw_transform = self.transformer.create_transform(self.phase, '_raw')
 
         if phase != Phase.TEST:
             # create label/weight transform only in train/val phase
-            self.label_transform = self.transformer.create_transform(self.phase)
+            self.label_transform = self.transformer.create_transform(self.phase, '_label')
 
             if self.instance_ratio is not None:
                 raise NotImplementedError("self.instance_ratio path is not implemented")
@@ -175,7 +175,8 @@ class StandardPDBDataset(AbstractDataset):
                  transformer_config,
                  mirror_padding=(16, 32, 32),
                  instance_ratio=None,
-                 random_seed=0):
+                 random_seed=0,
+                 force_rotations=False):
 
         reuse_grids = exe_config.get('reuse_grids', False)
         randomize_name = exe_config.get('randomize_name', False)
@@ -213,6 +214,9 @@ class StandardPDBDataset(AbstractDataset):
 
             raws, labels = self.pdbDataHandler.getRawsLabels(features=features, grid_config=grid_config)
             allowRotations = self.pdbDataHandler.checkRotations()
+            if force_rotations:
+                allowRotations = True
+                logger.warn('Forcing rotations for debugging')
 
         except Exception as e:
             raise type(e)(f"Tmp folder: {tmp_data_folder}") from e
@@ -234,7 +238,7 @@ class StandardPDBDataset(AbstractDataset):
                          instance_ratio=instance_ratio,
                          random_seed=random_seed,
                          allowRotations=allowRotations,
-                         debug_str=self.name)
+                         debug_str=f'{self.name}')
 
     def getStructure(self):
         return self.pdbDataHandler.getStructureLigand()[0]
@@ -280,6 +284,7 @@ def create_dataset(arg):
     file_path, name, dataset_config, phase, feature_config, transformer_config = arg
     phase_config = dataset_config[phase]
     fail_on_error = dataset_config.get('fail_on_error', False)
+    force_rotations = dataset_config.get('force_rotations', False)
 
     features: ComposedFeatures = get_features(feature_config)
 
@@ -309,7 +314,8 @@ def create_dataset(arg):
                                      grid_config=grid_config,
                                      mirror_padding=dataset_config.get('mirror_padding', None),
                                      instance_ratio=instance_ratio,
-                                     random_seed=random_seed)
+                                     random_seed=random_seed,
+                                     force_rotations=force_rotations)
         return dataset
     except Exception as e:
         if fail_on_error:
