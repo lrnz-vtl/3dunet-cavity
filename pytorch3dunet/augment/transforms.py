@@ -259,7 +259,7 @@ def get_transformer_classes(config: Iterable[Mapping[str,any]], validate=False):
         transformer_class = None
         for m in modules:
             try:
-                transformer_class : Type[BaseTransform] = getattr(m, name)
+                transformer_class: Type[BaseTransform] = getattr(m, name)
                 if validate:
                     logger.info(f'{transformer_class.__name__} options: {transformer_class.validate_options(conf)}')
                 ret.append(transformer_class)

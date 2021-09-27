@@ -6,11 +6,14 @@ from typing import Type, Mapping, Iterable, Any, Callable
 import numpy as np
 
 
-@dataclass(frozen=True)
 class Stats:
     mean: np.ndarray
     std: np.ndarray
 
+    def __init__(self, raws:np.ndarray):
+        assert raws.ndim == 4
+        self.mean = raws.mean(axis=(1,2,3))
+        pass
 
 @dataclass(frozen=True)
 class StandardizeGlobalOptions(TransformOptions):

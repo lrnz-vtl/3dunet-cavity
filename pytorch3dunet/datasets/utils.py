@@ -4,16 +4,15 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from pytorch3dunet.unet3d.utils import get_logger, profile
-from abc import ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 
 logger = get_logger('Dataset')
 
-class ConfigDataset(Dataset):
-    __metaclass__ = ABCMeta
+class ConfigDataset(Dataset, ABC):
 
     @classmethod
     @abstractmethod
-    def create_datasets(cls, dataset_config, features_config, phase):
+    def create_datasets(cls, dataset_config, features_config, transformer_config, phase):
         """
         Factory method for creating a list of datasets based on the provided config.
 
@@ -24,7 +23,7 @@ class ConfigDataset(Dataset):
         Returns:
             list of `Dataset` instances
         """
-        raise NotImplementedError
+        pass
 
     @classmethod
     def prediction_collate(cls, batch):
@@ -215,6 +214,7 @@ def get_train_loaders(config):
     loaders_config = config['loaders']
 
     features_config = config['featurizer']
+    transformer_config = config['transformer']
 
     logger.info('Creating training and validation set loaders...')
 
@@ -229,7 +229,7 @@ def get_train_loaders(config):
         dataset_cls_str = 'StandardPdbDataset'
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
 
-    dataset_class : ConfigDataset = _loader_classes(dataset_cls_str)
+    dataset_class: ConfigDataset = _loader_classes(dataset_cls_str)
 
     assert set(loaders_config['train']['file_paths']).isdisjoint(loaders_config['val']['file_paths']), \
         "Train and validation 'file_paths' overlap. One cannot use validation data for training!"
@@ -252,7 +252,8 @@ def get_train_loaders(config):
 
     def train_dataloader_gen(seed):
         logger.debug('Generating train datasets...')
-        train_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config, phase='train')
+        train_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
+                                                       transformer_config=transformer_config, phase='train')
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers,
                           collate_fn=collate_fn)
 
@@ -261,7 +262,8 @@ def get_train_loaders(config):
         def train_dataloader_gen(seed):
             return train_Dataloader
 
-    val_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config, phase='val')
+    val_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
+                                                 transformer_config=transformer_config, phase='val')
     val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers,
                                 collate_fn=collate_fn)
     def val_dataloader_gen(seed):
@@ -285,6 +287,7 @@ def get_test_loaders(config):
     loaders_config = config['loaders']
 
     features_config = config['featurizer']
+    transformer_config = config['transformer']
 
     logger.info('Creating test set loaders...')
 
@@ -293,9 +296,10 @@ def get_test_loaders(config):
     if dataset_cls_str is None:
         dataset_cls_str = 'StandardHDF5Dataset'
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
-    dataset_class = _loader_classes(dataset_cls_str)
+    dataset_class: ConfigDataset = _loader_classes(dataset_cls_str)
 
-    test_datasets = dataset_class.create_datasets(loaders_config, features_config, phase='test')
+    test_datasets = dataset_class.create_datasets(loaders_config, features_config,
+                                                  transformer_config=transformer_config, phase='test')
 
     num_workers = loaders_config.get('num_workers', 0)
     logger.info(f'Number of workers for the dataloader: {num_workers}')

@@ -13,6 +13,7 @@ from pytorch3dunet.unet3d.utils import profile, get_logger, \
     get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
 from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features
+from pytorch3dunet.augment.transforms import get_transformer_classes
 from . import utils
 
 logger = get_logger('UNet3DTrainer')
@@ -80,7 +81,7 @@ class UNet3DTrainerBuilder:
 
         features: BaseFeatureList = get_features(config['featurizer'])
 
-        get_transformer(config['transformer'])
+        get_transformer_classes(config['transformer'])
 
         model = get_model(features=features, model_config=config['model'])
         # use DataParallel if more than 1 GPU available

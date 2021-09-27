@@ -18,7 +18,7 @@ GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
 class ApbsGridCollection:
     """ Custom class representing a single electric potential grid """
-    def __init__(self, pot_grids : typing.Dict[float, PotGrid], grid_size):
+    def __init__(self, pot_grids: typing.Dict[float, PotGrid], grid_size):
         """
         pot_grids: Mapping dielectric constant -> PotGrid
         """
@@ -39,7 +39,7 @@ class ApbsGridCollection:
         self.grids = {k: pot_grid.grid[:self.grid_size, :self.grid_size, :self.grid_size] for k,pot_grid in pot_grids.items()}
         self.edges = [x[:self.grid_size] for x in firstGrid.edges]
         self.delta = firstGrid.delta
-        self.shape = firstGrid.grid.shape
+        self.shape = next(iter(self.grids.values())).shape
 
     def homologate_labels(self, labels):
         assert labels.shape == self.orig_shape
@@ -93,12 +93,12 @@ class PotentialGrid(BaseFeatureList):
     dielec_const_default = 4.0
 
     @property
-    def feature_types(cls) -> List[type]:
-        return [type(cls)]
+    def feature_types(self) -> List[type]:
+        return [type(self)]
 
     @property
-    def names(cls):
-        return [type(cls).__name__]
+    def names(self):
+        return [type(self).__name__]
 
     def __init__(self, **kwargs):
         self.dielec_const = kwargs.get('dielec_const', self.dielec_const_default)
@@ -115,12 +115,12 @@ class AtomLabel(BaseFeatureList):
     num_features = 1
 
     @property
-    def feature_types(cls) -> List[type]:
-        return [type(cls)]
+    def feature_types(self) -> List[type]:
+        return [type(self)]
 
     @property
-    def names(cls):
-        return [cls.__name__]
+    def names(self):
+        return [type(self).__name__]
 
     def __init__(self, **kwargs):
         pass

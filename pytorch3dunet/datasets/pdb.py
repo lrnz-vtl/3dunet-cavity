@@ -5,7 +5,7 @@ import h5py
 import numpy as np
 import glob
 import pytorch3dunet.augment.transforms as transforms
-from pytorch3dunet.augment.transforms import SampleStats
+from pytorch3dunet.augment.standardize import Stats
 from pytorch3dunet.datasets.utils import get_slice_builder, ConfigDataset, calculate_stats, sample_instances, \
     default_prediction_collate
 from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
@@ -63,7 +63,7 @@ class AbstractDataset(ConfigDataset):
 
         self.instance_ratio = instance_ratio
 
-        self.stats = SampleStats(raws)
+        self.stats = Stats(raws)
         # min_value, max_value, mean, std = self.ds_stats(raws)
 
         self.transformer = transforms.get_transformer(transformer_config, allowRotations=allowRotations,
@@ -281,7 +281,7 @@ class StandardPDBDataset(AbstractDataset):
 
 
     @classmethod
-    def create_datasets(cls, dataset_config, features_config, phase):
+    def create_datasets(cls, dataset_config, features_config, transformer_config, phase):
         phase_config = dataset_config[phase]
 
         logger.info(f"Slice builder config: {phase_config['slice_builder']}")
@@ -289,7 +289,7 @@ class StandardPDBDataset(AbstractDataset):
         file_paths = phase_config['file_paths']
         file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
-        args = [(file_path, name, dataset_config, phase, features_config) for file_path, name in file_paths]
+        args = [(file_path, name, dataset_config, phase, features_config, transformer_config) for file_path, name in file_paths]
 
         pdb_workers = dataset_config.get('pdb_workers', 0)
 
@@ -301,13 +301,13 @@ class StandardPDBDataset(AbstractDataset):
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
 def create_dataset(arg):
-    file_path, name, dataset_config, phase, feature_config = arg
+    file_path, name, dataset_config, phase, feature_config, transformer_config = arg
     phase_config = dataset_config[phase]
+    fail_on_error = dataset_config.get('fail_on_error', False)
 
-    features : BaseFeatureList = get_features(feature_config)
+    features: BaseFeatureList = get_features(feature_config)
 
     # load data augmentation configuration
-    transformer_config = phase_config['transformer']
     pregrid_transformer_config = phase_config.get('pdb_transformer', [])
     grid_config = dataset_config.get('grid_config', {})
 
@@ -335,7 +335,9 @@ def create_dataset(arg):
                                      instance_ratio=instance_ratio,
                                      random_seed=random_seed)
         return dataset
-    except Exception:
+    except Exception as e:
+        if fail_on_error:
+            raise e
         logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
         return None
 
