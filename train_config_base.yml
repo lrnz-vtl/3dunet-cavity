@@ -4,42 +4,27 @@ trainer:
   max_num_iterations: 150000
   log_after_iters: 250
   resume: null
-  validate_after_iters: 1000
+  validate_after_iters: 800
 eval_metric:
   name: MeanIoU
   ignore_index: null
+featurizer:
+  - name: PotentialGrid
+transformer:
+  - name: Standardize
+  - name: RandomFlip
+  - name: RandomRotate3D
 loaders:
   dataset: StandardPDBDataset
-  grid_config:
-    grid_size: 160
-  featurizer:
-    - name: PotentialGrid
+#  grid_config:
+#    grid_size: 80
   train:
     slice_builder:
       name: TrivialSliceBuilder
-    pdb_transformer:
-      - name: RandomRotate
-    transformer:
-      label:
-      - name: RandomFlip
-      - expand_dims: true
-        name: ToTensor
-      raw:
-      - name: Standardize
-      - name: RandomFlip
-      - expand_dims: true
-        name: ToTensor
+    pdb_transformer: []
   val:
     slice_builder:
       name: TrivialSliceBuilder
-    transformer:
-      label:
-      - expand_dims: true
-        name: ToTensor
-      raw:
-      - name: Standardize
-      - expand_dims: true
-        name: ToTensor
 loss:
   ignore_index: null
   name: BCEDiceLoss

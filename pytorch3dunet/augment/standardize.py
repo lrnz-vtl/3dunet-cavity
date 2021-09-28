@@ -13,7 +13,7 @@ class Stats:
         assert raws.ndim == 4
         self.mean = raws.mean(axis=(1,2,3))
         self.std = raws.std(axis=(1, 2, 3))
-        logger.debug(f'mean={self.mean}, std={self.mean}')
+        logger.debug(f'mean={self.mean}, std={self.std}')
 
 @dataclass(frozen=True)
 class StandardizeGlobalOptions(TransformOptions):

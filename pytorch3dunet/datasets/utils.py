@@ -247,7 +247,7 @@ def get_train_loaders(config):
         train_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
                                                        transformer_config=transformer_config, phase='train')
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers,
-                          collate_fn=collate_fn)
+                          collate_fn=collate_fn, pin_memory=True)
 
     if not regenerate_train_set:
         train_Dataloader = train_dataloader_gen(0)
@@ -257,7 +257,7 @@ def get_train_loaders(config):
     val_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
                                                  transformer_config=transformer_config, phase='val')
     val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers,
-                                collate_fn=collate_fn)
+                                collate_fn=collate_fn, pin_memory=True)
     def val_dataloader_gen(seed):
         return val_Dataloader
 
@@ -313,7 +313,7 @@ def get_test_loaders(config):
             collate_fn = default_prediction_collate
 
         yield DataLoader(test_dataset, batch_size=batch_size, num_workers=num_workers,
-                         collate_fn=collate_fn)
+                         collate_fn=collate_fn, pin_memory=True)
 
 
 def default_prediction_collate(batch):

@@ -90,7 +90,8 @@ if __name__=='__main__':
         torch.manual_seed(manual_seed)
         # see https://pytorch.org/docs/stable/notes/randomness.html
         torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.benchmark = True
+        logger.info(f'Setting torch.backends.cudnn.benchmark={torch.backends.cudnn.benchmark}')
 
     # create trainer
     trainer_builder_class = 'UNet3DTrainerBuilder'
