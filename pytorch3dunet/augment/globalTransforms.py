@@ -45,13 +45,14 @@ class RandomFlip(BaseTransform):
         return SkippedTransform()
 
     def __init__(self, options_conf: Mapping[str, Any], phase: Phase,
-                 generator: MyGenerator, **kwargs):
+                 generator: MyGenerator, debug_str:str, **kwargs):
+        self.debug_str = debug_str
         super().__init__(options_conf, phase, generator)
 
     def _call(self, m: np.ndarray, global_opt: RandomFlipOptions, featureTypes: List[Type[Transformable]]) -> np.ndarray:
         axis = (1,)
         rand = np.random.RandomState(seed=self.generator.gen_seed()).uniform()
-        logger.debug(f'Flip rand = {rand}')
+        logger.debug(f'Flip rand = {rand}, {self.debug_str}')
         if rand < global_opt.axis_prob:
             return np.flip(m, axis)
         return m
