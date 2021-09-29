@@ -50,6 +50,8 @@ class TestTransform(unittest.TestCase):
         expectedChange = self._convertExpected(expectedChange)
         cls.validate_options(options_conf)
 
+        common_config = {**common_config, **{'debug_str':None}}
+
         for phase in Phase:
 
             transform = ComposedTransform(transformer_classes=[cls], conf_options=[options_conf],
