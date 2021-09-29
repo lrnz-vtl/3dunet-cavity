@@ -17,7 +17,7 @@ transformer:
 loaders:
   dataset: StandardPDBDataset
 #  grid_config:
-#    grid_size: 80
+#    grid_size: 65
   train:
     slice_builder:
       name: TrivialSliceBuilder
