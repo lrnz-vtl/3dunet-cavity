@@ -2,12 +2,14 @@ trainer:
   max_num_epochs: 1000
   eval_score_higher_is_better: true
   max_num_iterations: 150000
-  log_after_iters: 250
+  log_after_iters: 3
   resume: null
-  validate_after_iters: 800
+  validate_after_iters: 2
 eval_metric:
   name: MeanIoU
   ignore_index: null
+log_metrics:
+  - name: PocketFScore
 featurizer:
   - name: KalasantyFeatures
 transformer:

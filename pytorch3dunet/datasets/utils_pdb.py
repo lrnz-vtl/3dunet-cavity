@@ -175,15 +175,20 @@ class PdbDataHandler:
         predbin = pred > 0.5
         coords = []
 
+        warned = False
+
         for i, coord in enumerate(structure.getCoords()):
             x, y, z = coord
             binx = int((x - min(self.apbsGrids.edges[0])) / self.apbsGrids.delta[0])
             biny = int((y - min(self.apbsGrids.edges[1])) / self.apbsGrids.delta[1])
             binz = int((z - min(self.apbsGrids.edges[2])) / self.apbsGrids.delta[2])
 
-            # if binx >= grid.shape[0] or biny >= grid.shape[1] or binz >= grid.shape[2]:
-            #     logger.warn("predbin out of bounds")
-            #     continue
+            if binx >= self.apbsGrids.shape[0] or biny >= self.apbsGrids.shape[1] or binz >= self.apbsGrids.shape[2]:
+                # if not warned:
+                if True:
+                    logger.warn(f"Ignoring coord {i} for {self.name} because out of bounds")
+                    warned = True
+                continue
 
             if predbin[binx, biny, binz]:
                 coords.append(i)

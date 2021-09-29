@@ -8,6 +8,8 @@ trainer:
 eval_metric:
   name: MeanIoU
   ignore_index: null
+log_metrics:
+  - name: PocketFScore
 featurizer:
   - name: PotentialGrid
   - name: AtomLabel
