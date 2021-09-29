@@ -37,7 +37,7 @@ class Transformer:
     def validate(self):
         for cls, options in zip(self.transformer_classes, self.conf_options):
             pp = pprint.pformat(cls.validate_options(options), indent=4)
-            logger.info(f'{cls.__name__} options: {pp}')
+            logger.info(f'{cls.__name__} options: \n{pp}')
 
     def _transformer_class(self, class_name) -> Type[BaseTransform]:
         clazz: Optional[Type[BaseTransform]] = None

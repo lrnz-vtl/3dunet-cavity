@@ -4,7 +4,7 @@ from openbabel import openbabel
 import prody as pr
 from pytorch3dunet.unet3d.utils import get_logger
 import subprocess
-from pytorch3dunet.datasets.featurizer import ApbsGridCollection, BaseFeatureList
+from pytorch3dunet.datasets.featurizer import ApbsGridCollection, BaseFeatureList, PotentialGrid
 from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
@@ -216,7 +216,12 @@ class PdbDataHandler:
         mol: Molecule = self.getMol()
 
         dielec_const_list = features.getDielecConstList()
-        pot_grids, labels = self._genGrids(structure, ligand, grid_config, dielec_const_list)
+        if not dielec_const_list:
+            # FIXME Even if empty list, need to run APBS grid anyway, to be able to generate the labels
+            dielec_const_list_for_labels = [PotentialGrid.dielec_const_default]
+        else:
+            dielec_const_list_for_labels = dielec_const_list
+        pot_grids, labels = self._genGrids(structure, ligand, grid_config, dielec_const_list_for_labels)
 
         self.apbsGrids = ApbsGridCollection(pot_grids, grid_size)
         labels = self.apbsGrids.homologate_labels(labels)

@@ -1,12 +1,13 @@
 import unittest
 
 import numpy as np
-from pytorch3dunet.augment.transforms import MyGenerator, Phase, BaseTransform, ComposedTransform
+from pytorch3dunet.augment.transforms import Phase, BaseTransform, ComposedTransform
 from pytorch3dunet.augment.standardize import Standardize, Stats
 from pytorch3dunet.augment.randomRotate import RandomRotate3D
 from pytorch3dunet.augment.globalTransforms import RandomFlip
-from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures, Transformable, get_feature_cls
-from typing import List, Type, Mapping, Any, Callable, Optional
+from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures, Transformable
+from typing import Type, Mapping, Any, Callable, Optional
+from utils import ExpectedChange
 
 
 class TestTransform(unittest.TestCase):
@@ -23,31 +24,10 @@ class TestTransform(unittest.TestCase):
         self.input = np.random.random(size=(channels.num_features, self.N,self.N,self.N))
         super().__init__(*args, **kwargs)
 
-    def _convertExpected(self, d:Mapping[str, Any]):
-        ret = {}
-        for phase, value in d.items():
-            phase = Phase.from_str(phase)
-            if isinstance(value,bool):
-                ret[phase] = value
-            else:
-                assert isinstance(value,dict)
-                ret[phase] = {}
-                for clsname, expected_change in value.items():
-                    ret[phase][get_feature_cls(clsname)] = expected_change
-        return ret
-
-    @staticmethod
-    def _is_change_expected(expectedChange:Any, channel_type):
-        if isinstance(expectedChange, bool):
-            return expectedChange
-        elif isinstance(expectedChange, dict):
-            return expectedChange[channel_type]
-        else:
-            raise ValueError
 
     def _test_transform(self, cls:Type[BaseTransform], options_conf:Mapping, expectedChange:Mapping,
                         common_config:Mapping, validate_fun:Optional[Callable[[np.ndarray,np.ndarray,int],bool]] = None) -> None:
-        expectedChange = self._convertExpected(expectedChange)
+        expectedChange = ExpectedChange(expectedChange)
         cls.validate_options(options_conf)
 
         common_config = {**common_config, **{'debug_str':None}}
@@ -64,7 +44,7 @@ class TestTransform(unittest.TestCase):
             for i,channel_type in enumerate(self.channel_types):
                 o3d = output[i]
                 i3d = self.input[i]
-                isExpectedChange = self._is_change_expected(expectedChange[phase], channel_type)
+                isExpectedChange = expectedChange.is_change_expected(phase, channel_type)
                 assert isExpectedChange != np.all(o3d == i3d), \
                     f"transform={cls.__name__}, isExpectedChange={isExpectedChange}, phase={phase}, i={i}, channel_type={channel_type}"
                 if isExpectedChange and validate_fun is not None:
@@ -160,7 +140,6 @@ class TestOptions(unittest.TestCase):
         Standardize.validate_options(options_conf={})
         RandomRotate3D.validate_options(options_conf={})
         RandomFlip.validate_options(options_conf={})
-
 
 
 if __name__ == '__main__':
