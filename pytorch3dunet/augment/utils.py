@@ -9,7 +9,8 @@ class Transformer:
     modules = [
         'pytorch3dunet.augment.standardize',
         'pytorch3dunet.augment.randomRotate',
-        'pytorch3dunet.augment.globalTransforms'
+        'pytorch3dunet.augment.globalTransforms',
+        'pytorch3dunet.augment.trivialRandom'
     ]
     modules = [importlib.import_module(m) for m in modules]
 
@@ -50,9 +51,9 @@ class Transformer:
             raise AttributeError(f"Class {class_name} not found in modules")
         return clazz
 
-    def create_transform(self, phase: Phase, debug_str=''):
+    def create_transform(self, phase: Phase, debug_str='', convert_to_torch=True):
         ''' Needs to be called separately for raw and label '''
         common_config = dict(self.common_config)
         common_config['debug_str'] = common_config['debug_str'] + debug_str
         return ComposedTransform(transformer_classes=self.transformer_classes, conf_options=self.conf_options,
-                                 common_config=common_config, phase=phase, seed=self.seed)
+                                 common_config=common_config, phase=phase, seed=self.seed, convert_to_torch=convert_to_torch)

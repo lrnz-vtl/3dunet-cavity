@@ -1,0 +1,48 @@
+trainer:
+  max_num_epochs: 1000
+  eval_score_higher_is_better: true
+  max_num_iterations: 150000
+  log_after_iters: 250
+  resume: null
+  validate_after_iters: 800
+eval_metric:
+  name: MeanIoU
+  ignore_index: null
+featurizer:
+  - name: PotentialGrid
+  - name: KalasantyFeatures
+transformer:
+  - name: Standardize
+  - name: RandomFlip
+  - name: RandomRotate3D
+loaders:
+  fail_on_error: true
+  dataset: StandardPDBDataset
+  force_rotations: true
+  grid_config:
+    grid_size: 65
+  train:
+    slice_builder:
+      name: TrivialSliceBuilder
+    pdb_transformer: []
+  val:
+    slice_builder:
+      name: TrivialSliceBuilder
+loss:
+  ignore_index: null
+  name: BCEDiceLoss
+lr_scheduler:
+  factor: 0.2
+  mode: min
+  name: ReduceLROnPlateau
+  patience: 15
+manual_seed: 0
+model:
+  f_maps: 32
+  final_sigmoid: true
+  layer_order: cr
+  name: UNet3D
+  out_channels: 1
+optimizer:
+  learning_rate: 0.0002
+  weight_decay: 1.0e-05
