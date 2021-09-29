@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from abc import ABC, abstractmethod
 from pytorch3dunet.datasets.featurizer import Transformable, get_feature_cls
-from typing import List, Type, Iterable, Any, Callable, Mapping
+from typing import List, Type, Iterable, Any, Callable, Mapping, Union
 import torch
 import numpy as np
 from pytorch3dunet.unet3d.utils import get_logger
@@ -15,13 +15,7 @@ GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 logger = get_logger('Transformer')
 
 
-class PicklableGenerator(torch.Generator):
-    def __getstate__(self):
-        return self.get_state()
-
-    def __setstate__(self, state):
-        return self.set_state(state)
-
+class MyGenerator(torch.Generator):
     def gen_seed(self):
         return torch.randint(generator=self, high=MAX_SEED, size=(1,)).item()
 
@@ -75,6 +69,7 @@ class SkippedTransform(SkippableTransformOptions):
         return 'Skipped'
 
 class Transform(ABC):
+
     @abstractmethod
     def __call__(self, m: np.ndarray, featureTypes: Iterable[Type[Transformable]]) -> np.ndarray:
         pass
@@ -130,8 +125,12 @@ class BaseTransform(Transform, ABC):
     def validate_options(cls, options_conf: Mapping[str, Mapping[str, Any]]):
         return cls.validate_global_options(options_conf)
 
-    def __init__(self, options_conf: Mapping[str, Any], phase: Phase, **kwargs):
+    def set_seed(self, seed:int) -> None:
+        self.generator.manual_seed(seed)
+
+    def __init__(self, options_conf: Mapping[str, Any], phase: Phase, generator:MyGenerator, **kwargs):
         self.global_options = self.read_global_options(options_conf,phase)
+        self.generator = generator
 
     def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> np.ndarray:
         assert m.ndim == 4
@@ -170,7 +169,7 @@ class LocalTransform(BaseTransform, ABC):
         Callable[[np.ndarray, TransformOptions, int], np.ndarray]]:
         pass
 
-    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase):
+    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase, generator:MyGenerator):
 
         assert all(x in ['local','global'] for x in options_conf.keys())
         local_options_conf = options_conf.get('local', {})
@@ -181,7 +180,7 @@ class LocalTransform(BaseTransform, ABC):
             return local_options.get(t, self.default_local_options(phase, t))
         self.get_local_options = get_local_options
 
-        super().__init__(global_options_conf, phase)
+        super().__init__(global_options_conf, phase, generator)
 
     @classmethod
     def read_local_options(cls, local_options_conf: Mapping[str, Mapping[str,Any]], phase: Phase) \
@@ -263,28 +262,36 @@ class ComposedTransform(Transform, ABC):
 
         args = []
 
-        for cls, options_conf in zip(transformer_classes,conf_options):
-            config = dict(common_config)
-            # FIXME Object needs to be reinitialised between epochs, all this will be always the same
-            config['generator'] = PicklableGenerator().manual_seed(seed)
-
-            args.append((cls, options_conf, phase, config))
+        for i,(cls, options_conf) in enumerate(zip(transformer_classes,conf_options)):
+            iseed = seed+i
+            config = {**common_config,
+                      **{'generator': MyGenerator().manual_seed(iseed)}
+                      }
+            args.append((cls, options_conf, phase, iseed))
             self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
 
-        self.state = self.dtype, self.convert_to_torch, args
+        self.state = common_config, self.dtype, self.convert_to_torch, args
 
     # FIXME This is probably bugged if we pickle after calling the first time
     def __getstate__(self):
         return self.state
 
     def __setstate__(self, state):
-        logger.warn(f'Pickling the {type(self).__name__} instance - This has not been properly tested')
+        logger.warning(f'Pickling the {type(self).__name__} instance - This has not been properly tested')
         self.transforms = []
-        self.dtype, self.convert_to_torch, args = state
-        for cls, options_conf, phase, config in args:
+        common_config, self.dtype, self.convert_to_torch, args = state
+        for i, (cls, options_conf, phase, iseed) in enumerate(args):
+            config = {**common_config,
+                      **{'generator': MyGenerator().manual_seed(iseed)}
+                      }
             self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
 
-    def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> torch.Tensor:
+    # FIXME Should also update the state
+    def set_seeds(self, seed:int) -> None:
+        for i,t in enumerate(self.transforms):
+            t.set_seed(seed + i)
+
+    def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> Union[torch.Tensor, np.ndarray]:
         assert m.ndim == 4
         for trans in self.transforms:
             m = trans(m, featureTypes)

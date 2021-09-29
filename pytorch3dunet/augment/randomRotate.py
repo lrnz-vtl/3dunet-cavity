@@ -1,5 +1,5 @@
 from pytorch3dunet.augment.transforms import TransformOptions, LocalTransform, Phase, \
-    SkippableTransformOptions, SkippedTransform, PicklableGenerator, logger
+    SkippableTransformOptions, SkippedTransform, MyGenerator, logger
 from dataclasses import dataclass
 from pytorch3dunet.datasets.featurizer import Transformable
 from typing import Type, Mapping, Iterable, Any, Callable
@@ -61,11 +61,10 @@ class RandomRotate3D(LocalTransform):
         return RotateGlobalOptions
 
     def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase:Phase,
-                 generator: PicklableGenerator, debug_str:str=None,
+                 generator: MyGenerator, debug_str:str=None,
                  **kwargs):
         self.debug_str = debug_str
-        self.generator = generator
-        super().__init__(options_conf, phase)
+        super().__init__(options_conf, phase, generator)
 
     def makeCallableSequence(self, global_opt: RotateGlobalOptions) -> Iterable[Callable[[np.ndarray,TransformOptions,int], np.ndarray]]:
 

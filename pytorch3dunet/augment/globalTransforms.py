@@ -1,7 +1,7 @@
 import logging
 from typing import Callable, Generator
 from pytorch3dunet.augment.transforms import TransformOptions, Phase, \
-    SkippableTransformOptions, SkippedTransform, PicklableGenerator, BaseTransform, LocalTransform
+    SkippableTransformOptions, SkippedTransform, MyGenerator, BaseTransform, LocalTransform
 from dataclasses import dataclass
 from pytorch3dunet.datasets.featurizer import Transformable
 from typing import Type, Mapping, Optional, List, Any
@@ -45,13 +45,13 @@ class RandomFlip(BaseTransform):
         return SkippedTransform()
 
     def __init__(self, options_conf: Mapping[str, Any], phase: Phase,
-                 generator: PicklableGenerator, **kwargs):
-        self.random_state = np.random.RandomState(seed=generator.gen_seed())
-        super().__init__(options_conf, phase)
+                 generator: MyGenerator, **kwargs):
+        super().__init__(options_conf, phase, generator)
 
     def _call(self, m: np.ndarray, global_opt: RandomFlipOptions, featureTypes: List[Type[Transformable]]) -> np.ndarray:
         axis = (1,)
-        rand = self.random_state.uniform()
+        rand = np.random.RandomState(seed=self.generator.gen_seed()).uniform()
+        logger.debug(f'Flip rand = {rand}')
         if rand < global_opt.axis_prob:
             return np.flip(m, axis)
         return m

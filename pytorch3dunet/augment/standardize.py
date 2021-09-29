@@ -1,5 +1,5 @@
 from pytorch3dunet.augment.transforms import TransformOptions, LocalTransform, Phase, \
-    SkippableTransformOptions, SkippedTransform, logger
+    SkippableTransformOptions, SkippedTransform, logger, MyGenerator
 from dataclasses import dataclass
 from pytorch3dunet.datasets.featurizer import Transformable, PotentialGrid
 from typing import Type, Mapping, Iterable, Any, Callable
@@ -57,11 +57,11 @@ class Standardize(LocalTransform):
         return StandardizeGlobalOptions
 
 
-    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase,
+    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase, generator:MyGenerator,
                  featureStats: Stats, **kwargs):
         assert isinstance(featureStats, Stats)
         self.featureStats = featureStats
-        super().__init__(options_conf, phase)
+        super().__init__(options_conf, phase, generator)
 
 
     def makeCallableSequence(self, global_opt:StandardizeGlobalOptions) -> Iterable[Callable[[np.ndarray,TransformOptions,int], np.ndarray]]:

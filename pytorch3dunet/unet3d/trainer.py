@@ -192,7 +192,7 @@ class UNet3DTrainer:
         self.dry_run = dry_run
         self.dump_inputs = dump_inputs
 
-        self.valLoaders = self.loaders['val'](seed=0)
+        self.valLoaders = self.loaders['val']()
 
         logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
@@ -276,7 +276,7 @@ class UNet3DTrainer:
     def fit(self):
         for i in range(self.num_epoch, self.max_num_epochs):
             logger.info(f'Entering training epoch {i}')
-            trainLoaders = self.loaders['train'](seed=i)
+            trainLoaders = self.loaders['train']()
 
             # train for one epoch
             should_terminate = self.train(trainLoaders)

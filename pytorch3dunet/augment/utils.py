@@ -19,8 +19,6 @@ class Transformer:
         self.common_config = {**common_config, **{'featureStats': stats, 'debug_str': debug_str}}
         self.seed = torch.randint(MAX_SEED, size=(1,)).item()
 
-        logger.debug(f'Initialising new random state with seed = {self.seed}')
-
         self.transformer_classes = []
         self.conf_options = []
 

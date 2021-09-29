@@ -1,10 +1,15 @@
+from __future__ import annotations
 import collections
 import importlib
+import logging
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from pytorch3dunet.unet3d.utils import get_logger, profile
 from abc import ABC, abstractmethod
+from typing import List
+
+MAX_SEED = 2 ** 32 - 1
 
 logger = get_logger('Dataset')
 
@@ -12,7 +17,7 @@ class ConfigDataset(Dataset, ABC):
 
     @classmethod
     @abstractmethod
-    def create_datasets(cls, dataset_config, features_config, transformer_config, phase):
+    def create_datasets(cls, dataset_config, features_config, transformer_config, phase) -> List[ConfigDataset]:
         """
         Factory method for creating a list of datasets based on the provided config.
 
@@ -29,6 +34,10 @@ class ConfigDataset(Dataset, ABC):
     def prediction_collate(cls, batch):
         """Default collate_fn. Override in child class for non-standard datasets."""
         return default_prediction_collate(batch)
+
+    @abstractmethod
+    def set_transform_seeds(self, seed:int) -> None:
+        pass
 
 
 class SliceBuilder:
@@ -210,11 +219,6 @@ def get_train_loaders(config):
 
     logger.info('Creating training and validation set loaders...')
 
-    # NOTE At the moment I don't know how not to regenerate the data without messing with the random number generator.
-    # Can keep this true with reuse_grid = True for performance
-    regenerate_train_set = loaders_config.get('regenerate_train_set', True)
-    logger.info(f'regenerate_train_set = {regenerate_train_set}')
-
     # get dataset class
     dataset_cls_str = loaders_config.get('dataset', None)
     if dataset_cls_str is None:
@@ -242,28 +246,27 @@ def get_train_loaders(config):
         # Will use standard collate function
         collate_fn = None
 
-    def train_dataloader_gen(seed):
-        logger.debug('Generating train datasets...')
-        train_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
-                                                       transformer_config=transformer_config, phase='train')
+    train_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
+                                                    transformer_config=transformer_config, phase='train')
+
+    def train_dataloader_gen():
+        for dataset in train_datasets:
+            seed = torch.randint(size=(1,), high=MAX_SEED).item()
+            dataset.set_transform_seeds(seed)
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers,
                           collate_fn=collate_fn, pin_memory=True)
 
-    if not regenerate_train_set:
-        train_Dataloader = train_dataloader_gen(0)
-        def train_dataloader_gen(seed):
-            return train_Dataloader
 
     val_datasets = dataset_class.create_datasets(dataset_config=loaders_config, features_config=features_config,
                                                  transformer_config=transformer_config, phase='val')
+    # don't shuffle during validation: useful when showing how predictions for a given batch get better over time
     val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False, num_workers=num_workers,
                                 collate_fn=collate_fn, pin_memory=True)
-    def val_dataloader_gen(seed):
+    def val_dataloader_gen():
         return val_Dataloader
 
     return {
         'train': train_dataloader_gen,
-        # don't shuffle during validation: useful when showing how predictions for a given batch get better over time
         'val': val_dataloader_gen
     }
 

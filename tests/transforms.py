@@ -1,7 +1,7 @@
 import unittest
 
 import numpy as np
-from pytorch3dunet.augment.transforms import PicklableGenerator, Phase, BaseTransform, ComposedTransform
+from pytorch3dunet.augment.transforms import MyGenerator, Phase, BaseTransform, ComposedTransform
 from pytorch3dunet.augment.standardize import Standardize, Stats
 from pytorch3dunet.augment.randomRotate import RandomRotate3D
 from pytorch3dunet.augment.globalTransforms import RandomFlip

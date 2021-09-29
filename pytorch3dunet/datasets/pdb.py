@@ -14,17 +14,22 @@ from pytorch3dunet.unet3d.utils import get_logger
 import uuid
 from torch.utils.data._utils.collate import default_collate
 from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features, Transformable, LabelClass, ComposedFeatures
-from typing import Iterable, Type
+from typing import Iterable, Type, List
+from abc import ABC
 
 logger = get_logger('PdbDataset')
 lock = Lock()
 
 
-class AbstractDataset(ConfigDataset):
+class AbstractDataset(ConfigDataset, ABC):
     """
     Implementation of torch.utils.data.Dataset backed by the HDF5 files, which iterates over the raw and label datasets
     patch by patch with a given stride.
     """
+
+    def set_transform_seeds(self, seed:int) -> None:
+        self.raw_transform.set_seeds(seed)
+        self.label_transform.set_seeds(seed)
 
     def __init__(self, raws:np.ndarray, labels:np.ndarray, weight_maps,
                  featuresTypes: Iterable[Type[Transformable]],
@@ -115,7 +120,7 @@ class AbstractDataset(ConfigDataset):
                 h5.create_dataset('weight_maps', data=weight_maps)
 
         self.patch_count = len(self.raw_slices)
-        logger.info(f'Number of patches: {self.patch_count}')
+        logger.debug(f'Number of patches: {self.patch_count}')
 
     def __getitem__(self, idx):
         if idx >= len(self):
@@ -261,7 +266,7 @@ class StandardPDBDataset(AbstractDataset):
 
 
     @classmethod
-    def create_datasets(cls, dataset_config, features_config, transformer_config, phase):
+    def create_datasets(cls, dataset_config, features_config, transformer_config, phase) -> List[ConfigDataset]:
         phase_config = dataset_config[phase]
 
         logger.info(f"Slice builder config: {phase_config['slice_builder']}")
@@ -280,7 +285,8 @@ class StandardPDBDataset(AbstractDataset):
         else:
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
-def create_dataset(arg):
+
+def create_dataset(arg) -> StandardPDBDataset:
     file_path, name, dataset_config, phase, feature_config, transformer_config = arg
     phase_config = dataset_config[phase]
     fail_on_error = dataset_config.get('fail_on_error', False)
