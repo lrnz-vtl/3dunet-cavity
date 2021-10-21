@@ -150,7 +150,7 @@ class KalasantyFeatures(BaseFeatureList):
 class ComposedFeatures(BaseFeatureList):
 
     @property
-    def feature_types(self) -> List[type]:
+    def feature_types(self) -> List[Type[Transformable]]:
         return self._types
 
     @property

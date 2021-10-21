@@ -3,7 +3,7 @@ import h5py
 import numpy as np
 import torch
 from pathlib import Path
-from pytorch3dunet.datasets.pdb import StandardPDBDataset
+from pytorch3dunet.datasets.pdb import PDBDataset
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
 import prody
@@ -42,8 +42,8 @@ class PdbPredictor(_AbstractPredictorPdb):
 
     def __call__(self, test_loader):
 
-        assert isinstance(test_loader.dataset, StandardPDBDataset)
-        dataset: StandardPDBDataset = test_loader.dataset
+        assert isinstance(test_loader.dataset, PDBDataset)
+        dataset: PDBDataset = test_loader.dataset
 
         name = dataset.name
         logger.info(f"Processing '{name}'...")
@@ -159,7 +159,7 @@ class PdbPredictor(_AbstractPredictorPdb):
         normalization_masks = [np.zeros(output_shape, dtype='uint8') for _ in range(output_heads)]
         return prediction_maps, normalization_masks
 
-    def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset : StandardPDBDataset, output_pdb_path,
+    def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset : PDBDataset, output_pdb_path,
                       output_h5_file=None):
         pdbData = dataset.pdbDataHandler
 

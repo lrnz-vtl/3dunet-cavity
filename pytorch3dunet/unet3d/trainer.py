@@ -5,7 +5,7 @@ import torch.nn as nn
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import h5py
-from pytorch3dunet.datasets.utils import get_train_loaders
+from pytorch3dunet.datasets.loaders import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric, get_log_metrics
 from pytorch3dunet.unet3d.model import get_model
