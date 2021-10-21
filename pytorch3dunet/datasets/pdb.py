@@ -24,7 +24,6 @@ class PDBDataset(AbstractDataset):
                  grid_config,
                  features: ComposedFeatures,
                  transformer_config,
-                 mirror_padding=(16, 32, 32),
                  random_seed=0,
                  force_rotations=False):
 
@@ -84,7 +83,6 @@ class PDBDataset(AbstractDataset):
                          phase=phase,
                          slice_builder_config=slice_builder_config,
                          transformer_config=transformer_config,
-                         mirror_padding=mirror_padding,
                          random_seed=random_seed,
                          allowRotations=allowRotations,
                          debug_str=f'{name}')
@@ -161,7 +159,6 @@ def create_dataset(arg) -> Optional[PDBDataset]:
                              transformer_config=transformer_config,
                              pregrid_transformer_config=pregrid_transformer_config,
                              grid_config=grid_config,
-                             mirror_padding=dataset_config.get('mirror_padding', None),
                              random_seed=random_seed,
                              force_rotations=force_rotations)
         return dataset

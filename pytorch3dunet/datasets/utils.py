@@ -36,6 +36,7 @@ def get_class(class_name, modules):
 def _loader_classes(class_name):
     modules = [
         'pytorch3dunet.datasets.pdb',
+        'pytorch3dunet.datasets.random',
         'pytorch3dunet.datasets.utils'
     ]
     return get_class(class_name, modules)

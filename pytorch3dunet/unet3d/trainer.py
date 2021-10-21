@@ -306,12 +306,7 @@ class UNet3DTrainer:
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
             names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
-            # logger.debug(f'Input.shape: {input.shape}. target.shape: {target.shape}')
             logger.debug(f'Forward samples {names}')
-            # logger.debug(f'Forward passing samples {names}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
-            #
-            # if input.dtype != torch.float32:
-            #     raise ValueError("Not a float32")
 
             if self.dump_inputs:
                 dump_dir = f'{self.checkpoint_dir}/dumps'

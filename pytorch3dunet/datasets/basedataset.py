@@ -40,7 +40,6 @@ class AbstractDataset(Dataset, ABC):
                  phase: Phase,
                  slice_builder_config,
                  transformer_config,
-                 mirror_padding=(16, 32, 32),
                  random_seed=0,
                  allowRotations=True,
                  debug_str=None):
@@ -53,16 +52,6 @@ class AbstractDataset(Dataset, ABC):
 
         labels = np.expand_dims(labels, axis=0)
 
-        if phase in [Phase.TRAIN, phase.VAL]:
-            mirror_padding = None
-
-        if mirror_padding is not None:
-            if isinstance(mirror_padding, int):
-                mirror_padding = (mirror_padding,) * 3
-            else:
-                assert len(mirror_padding) == 3, f"Invalid mirror_padding: {mirror_padding}"
-
-        self.mirror_padding = mirror_padding
         self.phase = phase
 
         self.stats = Stats(raws)
@@ -79,16 +68,6 @@ class AbstractDataset(Dataset, ABC):
         else:
             # 'test' phase used only for predictions so ignore the label dataset
             labels = None
-
-            # add mirror padding if needed
-            if self.mirror_padding is not None:
-                raise NotImplementedError('mirror_padding branch of the code has not been tested')
-                z, y, x = self.mirror_padding
-                pad_width = ((z, z), (y, y), (x, x))
-                channels = [np.pad(r, pad_width=pad_width, mode='reflect') for r in raw]
-                padded_volume = np.stack(channels)
-
-                raws = padded_volume
 
         # build slice indices for raw and label data sets
         slice_builder = get_slice_builder(raws, labels, slice_builder_config)
