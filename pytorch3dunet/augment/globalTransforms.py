@@ -1,18 +1,14 @@
-import logging
-from typing import Callable, Generator
 from pytorch3dunet.augment.transforms import TransformOptions, Phase, \
-    SkippableTransformOptions, SkippedTransform, MyGenerator, BaseTransform, LocalTransform
+    SkippableTransformOptions, SkippedTransform, MyGenerator, BaseTransform, logger
 from dataclasses import dataclass
 from pytorch3dunet.datasets.featurizer import Transformable
-from typing import Type, Mapping, Optional, List, Any
+from typing import Type, Mapping, List, Any
 import numpy as np
 import numbers
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import profile
 
 MAX_SEED = 2**32 - 1
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
-
-logger = get_logger('Transforms', level=logging.DEBUG)
 
 
 @dataclass(frozen=True)
@@ -49,6 +45,7 @@ class RandomFlip(BaseTransform):
         self.debug_str = debug_str
         super().__init__(options_conf, phase, generator)
 
+    @profile
     def _call(self, m: np.ndarray, global_opt: RandomFlipOptions, featureTypes: List[Type[Transformable]]) -> np.ndarray:
         axis = (1,)
         rand = np.random.RandomState(seed=self.generator.gen_seed()).uniform()

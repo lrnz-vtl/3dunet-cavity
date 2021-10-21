@@ -3,50 +3,16 @@ import numpy as np
 import openbabel.pybel
 import prody
 import itertools
-from typing import List, Type, Iterable, Mapping
+from typing import List, Type
 import tfbio.data
 from pytorch3dunet.unet3d.utils import get_logger
-from potsim2 import PotGrid
+from pytorch3dunet.datasets.apbs import ApbsGridCollection
 from abc import ABC, abstractmethod
 
 logger = get_logger('Featurizer')
 
 # WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
-
-
-class ApbsGridCollection:
-    """ Custom class representing a single electric potential grid """
-    def __init__(self, pot_grids: Mapping[float, PotGrid], grid_size):
-        """
-        pot_grids: Mapping dielectric constant -> PotGrid
-        """
-        firstGrid: PotGrid = next(iter(pot_grids.values()))
-        assert all(pot_grid.grid.shape == firstGrid.grid.shape for pot_grid in pot_grids.values())
-        assert all((np.array(pot_grid.edges) == np.array(firstGrid.edges)).all() for pot_grid in pot_grids.values())
-        assert all((pot_grid.delta == firstGrid.delta).all() for pot_grid in pot_grids.values())
-
-        assert firstGrid.grid.shape[0] >= grid_size
-
-        self.orig_shape = firstGrid.grid.shape
-        self.grid_size = grid_size
-        if self.grid_size < firstGrid.grid.shape[0]:
-            logger.warn(
-                f"Requested grid_size = {self.grid_size} is smaller than apbs output grid size = {firstGrid.grid.shape[0]}. "
-                f"Applying naive cropping!!!")
-
-        self.grids = {k: pot_grid.grid[:self.grid_size, :self.grid_size, :self.grid_size] for k,pot_grid in pot_grids.items()}
-        self.edges = [x[:self.grid_size] for x in firstGrid.edges]
-        self.delta = firstGrid.delta
-        self.shape = next(iter(self.grids.values())).shape
-
-    def homologate_labels(self, labels):
-        assert labels.shape == self.orig_shape
-        return labels[:self.grid_size, :self.grid_size, :self.grid_size]
-
-    def delGrids(self):
-        """ Free memory """
-        del self.grids
 
 
 class Transformable(ABC):

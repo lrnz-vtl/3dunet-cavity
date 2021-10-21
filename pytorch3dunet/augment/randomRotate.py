@@ -8,6 +8,7 @@ import torch
 from scipy.ndimage import rotate
 from scipy.spatial.transform import Rotation
 import numbers
+from pytorch3dunet.unet3d.utils import profile
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class RandomRotate3D(LocalTransform):
         self.debug_str = debug_str
         super().__init__(options_conf, phase, generator)
 
+    @profile
     def makeCallableSequence(self, global_opt: RotateGlobalOptions) -> Iterable[Callable[[np.ndarray,TransformOptions,int], np.ndarray]]:
 
         rand = torch.rand(size=(1,), generator=self.generator).item()

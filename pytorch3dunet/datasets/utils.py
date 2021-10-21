@@ -136,11 +136,10 @@ class TrivialSliceBuilder:
     Builds the position of the patches in a given raw/label/weight ndarray based on the the patch and stride shape
     """
 
-    def __init__(self, raw_dataset, label_dataset, weight_dataset, **kwargs):
+    def __init__(self, raw_dataset, label_dataset, **kwargs):
         """
         :param raw_datasets: ndarray of raw data
         :param label_datasets: ndarray of ground truth labels
-        :param weight_dataset: ndarray of weights for the labels
         :param patch_shape: the shape of the patch DxHxW
         :param stride_shape: the shape of the stride DxHxW
         :param kwargs: additional metadata
@@ -153,11 +152,6 @@ class TrivialSliceBuilder:
             # take the first element in the label_datasets to build slices
             self._label_slices = self._build_slices(label_dataset)
             assert len(self._raw_slices) == len(self._label_slices)
-        if weight_dataset is None:
-            self._weight_slices = None
-        else:
-            self._weight_slices = self._build_slices(weight_dataset)
-            assert len(self.raw_slices) == len(self._weight_slices)
 
     @property
     def raw_slices(self):
@@ -166,10 +160,6 @@ class TrivialSliceBuilder:
     @property
     def label_slices(self):
         return self._label_slices
-
-    @property
-    def weight_slices(self):
-        return self._weight_slices
 
     @staticmethod
     def _build_slices(dataset):
@@ -195,10 +185,10 @@ def _loader_classes(class_name):
     return get_class(class_name, modules)
 
 
-def get_slice_builder(raws, labels, weight_maps, config):
+def get_slice_builder(raws, labels, config):
     assert 'name' in config
     slice_builder_cls = _loader_classes(config['name'])
-    return slice_builder_cls(raws, labels, weight_maps, **config)
+    return slice_builder_cls(raws, labels, **config)
 
 
 def get_train_loaders(config):

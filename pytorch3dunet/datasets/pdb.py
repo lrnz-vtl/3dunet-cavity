@@ -14,7 +14,7 @@ from pytorch3dunet.unet3d.utils import get_logger
 import uuid
 from torch.utils.data._utils.collate import default_collate
 from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features, Transformable, LabelClass, ComposedFeatures
-from typing import Iterable, Type, List
+from typing import Iterable, Type, List, Optional
 from abc import ABC
 
 logger = get_logger('PdbDataset')
@@ -31,14 +31,13 @@ class AbstractDataset(ConfigDataset, ABC):
         self.raw_transform.set_seeds(seed)
         self.label_transform.set_seeds(seed)
 
-    def __init__(self, raws:np.ndarray, labels:np.ndarray, weight_maps,
+    def __init__(self, raws:np.ndarray, labels:np.ndarray,
                  featuresTypes: Iterable[Type[Transformable]],
                  tmp_data_folder,
                  phase: Phase,
                  slice_builder_config,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
-                 instance_ratio=None,
                  random_seed=0,
                  allowRotations=True,
                  debug_str=None):
@@ -52,7 +51,6 @@ class AbstractDataset(ConfigDataset, ABC):
         """
         self.tmp_data_folder = tmp_data_folder
         self.h5path = Path(self.tmp_data_folder) / f'grids.h5'
-        self.hasWeights = weight_maps is not None
         self.featureTypes: Iterable[Type[Transformable]] = featuresTypes
 
         labels = np.expand_dims(labels, axis=0)
@@ -69,10 +67,7 @@ class AbstractDataset(ConfigDataset, ABC):
         self.mirror_padding = mirror_padding
         self.phase = phase
 
-        self.instance_ratio = instance_ratio
-
         self.stats = Stats(raws)
-        # min_value, max_value, mean, std = self.ds_stats(raws)
 
         self.transformer = Transformer(transformer_config=transformer_config, common_config={},
                                        allowRotations=allowRotations, debug_str=debug_str, stats=self.stats)
@@ -81,15 +76,6 @@ class AbstractDataset(ConfigDataset, ABC):
         if phase != Phase.TEST:
             # create label/weight transform only in train/val phase
             self.label_transform = self.transformer.create_transform(self.phase, '_label')
-
-            if self.instance_ratio is not None:
-                raise NotImplementedError("self.instance_ratio path is not implemented")
-                assert 0 < self.instance_ratio <= 1
-                rs = np.random.RandomState(random_seed)
-                labels = [sample_instances(m, self.instance_ratio, rs) for m in labels]
-
-            if self.hasWeights:
-                self.weight_transform = self.transformer.create_transform(self.phase)
 
             self._check_dimensionality(raws, labels)
         else:
@@ -107,17 +93,14 @@ class AbstractDataset(ConfigDataset, ABC):
                 raws = padded_volume
 
         # build slice indices for raw and label data sets
-        slice_builder = get_slice_builder(raws, labels, weight_maps, slice_builder_config)
+        slice_builder = get_slice_builder(raws, labels, slice_builder_config)
         self.raw_slices = slice_builder.raw_slices
         self.label_slices = slice_builder.label_slices
-        self.weight_slices = slice_builder.weight_slices
 
         with h5py.File(self.h5path, 'w') as h5:
             h5.create_dataset('raws', data=raws)
             if labels is not None:
                 h5.create_dataset('labels', data=labels)
-            if weight_maps is not None:
-                h5.create_dataset('weight_maps', data=weight_maps)
 
         self.patch_count = len(self.raw_slices)
         logger.debug(f'Number of patches: {self.patch_count}')
@@ -144,13 +127,7 @@ class AbstractDataset(ConfigDataset, ABC):
                 # get the slice for a given index 'idx'
                 label_idx = self.label_slices[idx]
                 label_patch_transformed = self.label_transform(labels[label_idx], [LabelClass])
-                if self.hasWeights:
-                    raise NotImplementedError('weights are not implemented')
-                    weight_maps = h5['weight_maps']
-                    weight_idx = self.weight_slices[idx]
-                    # return the transformed weight map for a given patch together with raw and label data
-                    weight_patch_transformed = self._transform_patches(weight_maps, weight_idx, self.weight_transform)
-                    return raw_patch_transformed, label_patch_transformed, weight_patch_transformed
+
                 # return the transformed raw and label patches
                 return (raw_patch_transformed, label_patch_transformed)
 
@@ -179,7 +156,6 @@ class StandardPDBDataset(AbstractDataset):
                  features: ComposedFeatures,
                  transformer_config,
                  mirror_padding=(16, 32, 32),
-                 instance_ratio=None,
                  random_seed=0,
                  force_rotations=False):
 
@@ -194,10 +170,12 @@ class StandardPDBDataset(AbstractDataset):
         if randomize_name:
             uuids = None
             if reuse_grids:
-                existing = list(glob.glob(str(Path(exe_config['tmp_folder']) / f"{name}_*")))
-                if len(existing) > 0:
-                    uuids = existing[0].split('_')[-1]
+                try:
+                    existing = next(glob.iglob(str(Path(exe_config['tmp_folder']) / f"{name}_*")))
+                    uuids = existing.split('_')[-1]
                     logger.info(f'Reusing existing uuid={uuids}')
+                except StopIteration:
+                    pass
             if uuids is None:
                 uuids = uuid.uuid1()
             tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
@@ -231,16 +209,14 @@ class StandardPDBDataset(AbstractDataset):
 
         if phase == 'test':
             labels = None
-        weight_maps = None
 
-        super().__init__(raws, labels, weight_maps,
+        super().__init__(raws, labels,
                          featuresTypes=features.feature_types,
                          tmp_data_folder=tmp_data_folder,
                          phase=phase,
                          slice_builder_config=slice_builder_config,
                          transformer_config=transformer_config,
                          mirror_padding=mirror_padding,
-                         instance_ratio=instance_ratio,
                          random_seed=random_seed,
                          allowRotations=allowRotations,
                          debug_str=f'{self.name}')
@@ -266,7 +242,7 @@ class StandardPDBDataset(AbstractDataset):
 
 
     @classmethod
-    def create_datasets(cls, dataset_config, features_config, transformer_config, phase) -> List[ConfigDataset]:
+    def create_datasets(cls, dataset_config, features_config, transformer_config, phase) -> Iterable[ConfigDataset]:
         phase_config = dataset_config[phase]
 
         logger.info(f"Slice builder config: {phase_config['slice_builder']}")
@@ -274,7 +250,7 @@ class StandardPDBDataset(AbstractDataset):
         file_paths = phase_config['file_paths']
         file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
-        args = [(file_path, name, dataset_config, phase, features_config, transformer_config) for file_path, name in file_paths]
+        args = ((file_path, name, dataset_config, phase, features_config, transformer_config) for file_path, name in file_paths)
 
         pdb_workers = dataset_config.get('pdb_workers', 0)
 
@@ -286,7 +262,7 @@ class StandardPDBDataset(AbstractDataset):
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
 
-def create_dataset(arg) -> StandardPDBDataset:
+def create_dataset(arg) -> Optional[StandardPDBDataset]:
     file_path, name, dataset_config, phase, feature_config, transformer_config = arg
     phase_config = dataset_config[phase]
     fail_on_error = dataset_config.get('fail_on_error', False)
@@ -302,7 +278,6 @@ def create_dataset(arg) -> StandardPDBDataset:
     slice_builder_config = phase_config['slice_builder']
 
     # load instance sampling configuration
-    instance_ratio = phase_config.get('instance_ratio', None)
     random_seed = phase_config.get('random_seed', 0)
 
     exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup', 'reuse_grids'] if k in dataset_config.keys()}
@@ -319,7 +294,6 @@ def create_dataset(arg) -> StandardPDBDataset:
                                      pregrid_transformer_config=pregrid_transformer_config,
                                      grid_config=grid_config,
                                      mirror_padding=dataset_config.get('mirror_padding', None),
-                                     instance_ratio=instance_ratio,
                                      random_seed=random_seed,
                                      force_rotations=force_rotations)
         return dataset

@@ -3,13 +3,11 @@ from pathlib import Path
 from openbabel import openbabel
 import prody as pr
 from pytorch3dunet.unet3d.utils import get_logger
-import subprocess
-from pytorch3dunet.datasets.featurizer import ApbsGridCollection, BaseFeatureList, PotentialGrid
+from pytorch3dunet.datasets.featurizer import BaseFeatureList, PotentialGrid
+from pytorch3dunet.datasets.apbs import ApbsGridCollection, TmpFile
 from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
-from potsim2 import PotGrid
-import typing
 import importlib
 from openbabel.pybel import readfile, Molecule
 
@@ -19,36 +17,6 @@ if miniball_spec is not None:
 
 logger = get_logger('UtilsPdb')
 
-
-grid_size_default = 161
-ligand_mask_radius_defaults = 6.5
-
-def apbsInput(pqr_fname, grid_fname, dielec_const, grid_size):
-    return f"""read
-    mol pqr {pqr_fname}
-end
-elec name prot
-    mg-manual
-    mol 1
-    dime {grid_size} {grid_size} {grid_size}
-    grid 1.0 1.0 1.0
-    gcent mol 1
-    lpbe
-    bcfl mdh
-    ion charge 1 conc 0.100 radius 2.0
-    ion charge -1 conc 0.100 radius 2.0
-    pdie {dielec_const}
-    sdie 78.54
-    sdens 10.0
-    chgm spl2
-    srfm smol
-    srad 0.0
-    swin 0.3
-    temp 298.15
-    calcenergy total
-    calcforce no
-    write pot gz {grid_fname}
-end"""
 
 def processPdb(src_data_folder, name, pdb_ligand_fname):
     """ Generate pdb training data from raw data """
@@ -88,7 +56,7 @@ class PdbDataHandler:
                  pregrid_transformer_config,
                  tmp_data_folder,
                  pdb2pqrPath,
-                 cleanup,
+                 cleanup: bool,
                  reuse_grids=False):
 
         self.src_data_folder = src_data_folder
@@ -155,10 +123,10 @@ class PdbDataHandler:
         lresname = ligand.getResnames()[0]
         ret = complx.select(f'same residue as exwithin 4.5 of resname {lresname}')
 
-        tmp_pocket_path = f'{self.tmp_data_folder}/tmp_pocket.pdb'
-        pr.writePDB(tmp_pocket_path, ret)
-        ret = pr.parsePDB(tmp_pocket_path)
-        os.remove(tmp_pocket_path)
+        with self.tmp_file(f'{self.tmp_data_folder}/tmp_pocket.pdb', True) as tmp_pocket_path:
+            pr.writePDB(tmp_pocket_path, ret)
+            ret = pr.parsePDB(tmp_pocket_path)
+
         return ret
 
     def makePdbPrediction(self, pred, expandResidues=True):
@@ -206,15 +174,11 @@ class PdbDataHandler:
         if len(ret)==0:
             return ret
         else:
-            tmp_pred_path = f'{self.tmp_data_folder}/tmp_pred.pdb'
-            pr.writePDB(tmp_pred_path, ret)
-            ret = pr.parsePDB(tmp_pred_path)
-            os.remove(tmp_pred_path)
-            return ret
+            with self.tmp_file(f'{self.tmp_data_folder}/tmp_pred.pdb', True) as tmp_pred_path:
+                pr.writePDB(tmp_pred_path, ret)
+                return pr.parsePDB(tmp_pred_path)
 
     def getRawsLabels(self, features: BaseFeatureList, grid_config):
-        ''' This also populates the self.grid variable '''
-        grid_size = grid_config.get('grid_size', grid_size_default)
 
         structure, ligand = self.getStructureLigand()
         # A different format
@@ -226,15 +190,12 @@ class PdbDataHandler:
             dielec_const_list_for_labels = [PotentialGrid.dielec_const_default]
         else:
             dielec_const_list_for_labels = dielec_const_list
-        pot_grids, labels = self._genGrids(structure, ligand, grid_config, dielec_const_list_for_labels)
 
-        self.apbsGrids = ApbsGridCollection(pot_grids, grid_size)
-        labels = self.apbsGrids.homologate_labels(labels)
+        with ApbsGridCollection(structure, ligand, grid_config, dielec_const_list_for_labels,
+                 self.tmp_data_folder, self.reuse_grids, self.name, self.pdb2pqrPath, self.cleanup) as self.apbsGrids:
 
-#        features = featurizer.get_featurizer(features_config2).raw_transform()
-        raws = features(structure, mol, self.apbsGrids)
-
-        self.apbsGrids.delGrids()
+            raws = features(structure, mol, self.apbsGrids)
+            labels = self.apbsGrids.labels
 
         return raws, labels
 
@@ -261,116 +222,28 @@ class PdbDataHandler:
         ligand2.setCoords(coords_ligand)
         return structure2, ligand2
 
-    def _remove(self,fname):
-        if self.cleanup:
-            os.remove(fname)
+    def tmp_file(self, name, force_removal:bool = False):
+        return TmpFile(name, self.cleanup or force_removal)
 
     def _processPdb(self):
-        tmp_ligand_pdb_file = str(Path(self.tmp_data_folder) / f'ligand_tmp.pdb')
-        complx, ligand = processPdb(self.src_data_folder, self.name, tmp_ligand_pdb_file)
-        self._remove(tmp_ligand_pdb_file)
-        return complx, ligand
-
-    def _runApbs(self, dst_pdb_file, grid_size, dielec_const_list) -> typing.Dict[float, PotGrid]:
-        pqr_output = f"{self.tmp_data_folder}/protein.pqr"
-
-        if self.reuse_grids and os.path.exists(pqr_output):
-            pass
-        else:
-            logger.debug(f'Running pdb2pqr on {self.name}')
-
-            proc = subprocess.Popen(
-                [
-                    self.pdb2pqrPath,
-                    "--with-ph=7.4",
-                    "--ff=PARSE",
-                    "--chain",
-                    dst_pdb_file,
-                    pqr_output
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            cmd_out = proc.communicate()
-            if proc.returncode != 0:
-                raise Exception(cmd_out[1].decode())
-
-        grids = {dielec_const: self._runApbsSingle(pqr_output, dst_pdb_file, grid_size, dielec_const) for dielec_const in dielec_const_list}
-
-        self._remove(pqr_output)
-        return grids
-
-    def _runApbsSingle(self, pqr_output, dst_pdb_file, grid_size, dielec_const) -> PotGrid:
-        grid_fname = f"{self.tmp_data_folder}/grid_{dielec_const}.dx.gz"
-
-        if self.reuse_grids and os.path.exists(grid_fname):
-            pass
-
-        else:
-            logger.debug(f'Running apbs on {self.name} with dielec_const = {dielec_const}')
-
-            owd = os.getcwd()
-            os.chdir(self.tmp_data_folder)
-
-            apbs_in_fname = "apbs-in"
-            grid_fname_in = '.'.join(str(Path(grid_fname).name).split('.')[:-2])
-            input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=grid_fname_in,
-                              grid_size=grid_size, dielec_const=dielec_const)
-
-            with open(apbs_in_fname, "w") as f:
-                f.write(input)
-
-            # generates dx.gz grid file
-            proc = subprocess.Popen(
-                ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            cmd_out = proc.communicate()
-            if proc.returncode != 0:
-                raise Exception(cmd_out[1].decode())
-
-            self._remove(apbs_in_fname)
-            os.chdir(owd)
-
-        grid = PotGrid(dst_pdb_file, grid_fname)
-        self._remove(grid_fname)
-
-        return grid
-
-    def _genGrids(self, structure, ligand, grid_config, dielec_const_list) -> (typing.Dict[float, PotGrid], typing.Any):
-        radius = grid_config.get('ligand_mask_radius', ligand_mask_radius_defaults)
-        grid_size = grid_config.get('grid_size', grid_size_default)
-
-        dst_pdb_file = f'{self.tmp_data_folder}/protein_trans.pdb'
-
-        pr.writePDB(dst_pdb_file, structure)
-        # pdb2pqr fails to read pdbs with the one line header generated by ProDy...
-        with open(dst_pdb_file, 'r') as fin:
-            data = fin.read().splitlines(True)
-        with open(dst_pdb_file, 'w') as fout:
-            fout.writelines(data[1:])
-
-        grids = self._runApbs(dst_pdb_file=dst_pdb_file, grid_size=grid_size, dielec_const_list=dielec_const_list)
-        self._remove(dst_pdb_file)
-
-        # ligand mask is a boolean NumPy array, can be converted to int: ligand_mask.astype(int)
-        ligand_mask = next(iter(grids.values())).get_ligand_mask(ligand, radius)
-
-        return grids, ligand_mask
+        with self.tmp_file(Path(self.tmp_data_folder) / f'ligand_tmp.pdb') as tmp_ligand_pdb_file:
+            return processPdb(self.src_data_folder, self.name, tmp_ligand_pdb_file)
 
     @classmethod
     def map_datasets(cls, dataset_config, phase, f):
+        # TODO Refactor
         phase_config = dataset_config[phase]
 
         file_paths = phase_config['file_paths']
         file_paths = cls.traverse_pdb_paths(file_paths)
 
-        args = [(file_path, name, dataset_config, phase) for file_path, name in file_paths]
+        args = ((file_path, name, dataset_config, phase) for file_path, name in file_paths)
 
         if dataset_config.get('parallel', True):
             nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
             logger.info(f'Parallelizing dataset creation among {nworkers} workers')
             pool = Pool(processes=nworkers)
-            return [f(*x) for x in pool.map(create_dataset, args) if x is not None]
+            return (f(*x) for x in pool.map(create_dataset, args) if x is not None)
         else:
             return [f(*x) for x in (create_dataset(arg) for arg in args) if x is not None]
 

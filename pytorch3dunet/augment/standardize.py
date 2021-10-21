@@ -71,6 +71,6 @@ class Standardize(LocalTransform):
         def func(m3d: np.ndarray, option: StandardizeLocalOptions, idx: int) -> np.ndarray:
             mean,std = self.featureStats.mean[idx],  self.featureStats.std[idx]
             return (m3d - mean) / np.clip(std, a_min=global_opt.eps, a_max=None)
-        return [func]
+        yield func
 
 

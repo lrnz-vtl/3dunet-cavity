@@ -8,6 +8,7 @@ import torch
 import numpy as np
 from pytorch3dunet.unet3d.utils import get_logger
 import inspect
+from pytorch3dunet.unet3d.utils import profile
 
 MAX_SEED = 2 ** 32 - 1
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
@@ -51,6 +52,7 @@ class SkippableTransformOptions(ABC):
     @abstractmethod
     def serialize(self):
         pass
+
     @staticmethod
     @property
     @abstractmethod
@@ -132,6 +134,7 @@ class BaseTransform(Transform, ABC):
         self.global_options = self.read_global_options(options_conf,phase)
         self.generator = generator
 
+    @profile
     def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> np.ndarray:
         assert m.ndim == 4
         assert m.shape[0] == len(featureTypes)
@@ -235,6 +238,7 @@ class LocalTransform(BaseTransform, ABC):
             'global': cls.validate_global_options(global_options_conf)
         }
 
+    @profile
     def _call(self, m: np.ndarray, global_opt: TransformOptions, featureTypes: List[Type[Transformable]]) -> np.ndarray:
 
         for fun in self.makeCallableSequence(global_opt):
@@ -291,6 +295,7 @@ class ComposedTransform(Transform, ABC):
         for i,t in enumerate(self.transforms):
             t.set_seed(seed + i)
 
+    @profile
     def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> Union[torch.Tensor, np.ndarray]:
         assert m.ndim == 4
         for trans in self.transforms:
