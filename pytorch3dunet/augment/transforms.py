@@ -1,6 +1,6 @@
 import dataclasses
 from dataclasses import dataclass
-from enum import Enum
+from pytorch3dunet.unet3d.utils import Phase
 from abc import ABC, abstractmethod
 from pytorch3dunet.datasets.featurizer import Transformable, get_feature_cls
 from typing import List, Type, Iterable, Any, Callable, Mapping, Union
@@ -19,33 +19,6 @@ logger = get_logger('Transformer')
 class MyGenerator(torch.Generator):
     def gen_seed(self):
         return torch.randint(generator=self, high=MAX_SEED, size=(1,)).item()
-
-
-class Phase(Enum):
-    TRAIN = 1
-    VAL = 2
-    TEST = 3
-
-    @classmethod
-    def from_str(cls, x:str):
-        y = x.lower()
-        if y=='train':
-            return cls.TRAIN
-        if y=='test':
-            return cls.TEST
-        if y=='val':
-            return cls.VAL
-        raise ValueError(x)
-
-    def __repr__(self):
-        if self==self.TRAIN:
-            return 'train'
-        if self==self.TEST:
-            return 'test'
-        if self==self.VAL:
-            return 'val'
-
-        raise RuntimeError
 
 
 class SkippableTransformOptions(ABC):

@@ -43,8 +43,12 @@ def _loader_classes(class_name):
 
 
 def get_slice_builder(raws, labels, config):
-    assert 'name' in config
-    slice_builder_cls = _loader_classes(config['name'])
+    if config is None:
+        config = {}
+        slice_builder_cls = TrivialSliceBuilder
+    else:
+        assert 'name' in config
+        slice_builder_cls = _loader_classes(config['name'])
     return slice_builder_cls(raws, labels, **config)
 
 

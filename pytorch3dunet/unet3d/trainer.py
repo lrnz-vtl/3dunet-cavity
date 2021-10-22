@@ -76,7 +76,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
 
 class UNet3DTrainerBuilder:
     @staticmethod
-    def build(config):
+    def build(config, loaders_config):
         # Create the model
 
         features: BaseFeatureList = get_features(config['featurizer'])
@@ -107,7 +107,7 @@ class UNet3DTrainerBuilder:
         log_criterions = get_log_metrics(config)
 
         # Create data loaders
-        loaders = get_train_loaders(config=config)
+        loaders = get_train_loaders(config=config, loaders_config=loaders_config)
 
         # Create the optimizer
         optimizer = create_optimizer(config['optimizer'], model)

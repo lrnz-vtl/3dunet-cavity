@@ -10,6 +10,7 @@ from multiprocessing import Pool, cpu_count
 import numpy as np
 import importlib
 from openbabel.pybel import readfile, Molecule
+from typing import List, Mapping
 
 miniball_spec = importlib.util.find_spec("miniball")
 if miniball_spec is not None:
@@ -53,11 +54,14 @@ class PdbDataHandler:
     def __init__(self,
                  src_data_folder,
                  name,
-                 pregrid_transformer_config,
                  tmp_data_folder,
                  pdb2pqrPath,
                  cleanup: bool,
-                 reuse_grids=False):
+                 reuse_grids: bool,
+                 pregrid_transformer_config:List[Mapping] = None):
+
+        if pregrid_transformer_config is None:
+            pregrid_transformer_config = []
 
         self.src_data_folder = src_data_folder
         self.name = name
@@ -178,7 +182,7 @@ class PdbDataHandler:
                 pr.writePDB(tmp_pred_path, ret)
                 return pr.parsePDB(tmp_pred_path)
 
-    def getRawsLabels(self, features: BaseFeatureList, grid_config):
+    def getRawsLabels(self, features: BaseFeatureList, grid_size:int, ligand_mask_radius:float):
 
         structure, ligand = self.getStructureLigand()
         # A different format
@@ -191,8 +195,10 @@ class PdbDataHandler:
         else:
             dielec_const_list_for_labels = dielec_const_list
 
-        with ApbsGridCollection(structure, ligand, grid_config, dielec_const_list_for_labels,
-                 self.tmp_data_folder, self.reuse_grids, self.name, self.pdb2pqrPath, self.cleanup) as self.apbsGrids:
+        with ApbsGridCollection(structure=structure, ligand=ligand, grid_size=grid_size, ligand_mask_radius=ligand_mask_radius,
+                                dielec_const_list=dielec_const_list_for_labels, tmp_data_folder=self.tmp_data_folder,
+                                reuse_grids=self.reuse_grids, name=self.name, pdb2pqrPath=self.pdb2pqrPath,
+                                cleanup=self.cleanup) as self.apbsGrids:
 
             raws = features(structure, mol, self.apbsGrids)
             labels = self.apbsGrids.labels

@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 import torch
 from torch import optim
+from enum import Enum
 
 
 import builtins
@@ -17,6 +18,32 @@ except AttributeError:
     # No line profiler, provide a pass-through version
     def profile(func): return func
 
+
+class Phase(Enum):
+    TRAIN = 1
+    VAL = 2
+    TEST = 3
+
+    @classmethod
+    def from_str(cls, x:str):
+        y = x.lower()
+        if y=='train':
+            return cls.TRAIN
+        if y=='test':
+            return cls.TEST
+        if y=='val':
+            return cls.VAL
+        raise ValueError(x)
+
+    def __repr__(self):
+        if self==self.TRAIN:
+            return 'train'
+        if self==self.TEST:
+            return 'test'
+        if self==self.VAL:
+            return 'val'
+
+        raise RuntimeError
 
 def save_checkpoint(state, is_best, checkpoint_dir, logger=None):
     """Saves model and training parameters at '{checkpoint_dir}/last_checkpoint.pytorch'.
@@ -153,43 +180,6 @@ def find_maximum_patch_size(model, device):
 
         logger.info(f"Current patch size: {shape}")
         model(patch)
-
-
-def remove_halo(patch, index, shape, patch_halo):
-    """
-    Remove `pad_width` voxels around the edges of a given patch.
-    """
-    assert len(patch_halo) == 3
-
-    def _new_slices(slicing, max_size, pad):
-        if slicing.start == 0:
-            p_start = 0
-            i_start = 0
-        else:
-            p_start = pad
-            i_start = slicing.start + pad
-
-        if slicing.stop == max_size:
-            p_stop = None
-            i_stop = max_size
-        else:
-            p_stop = -pad if pad != 0 else 1
-            i_stop = slicing.stop - pad
-
-        return slice(p_start, p_stop), slice(i_start, i_stop)
-
-    D, H, W = shape
-
-    i_c, i_z, i_y, i_x = index
-    p_c = slice(0, patch.shape[0])
-
-    p_z, i_z = _new_slices(i_z, D, patch_halo[0])
-    p_y, i_y = _new_slices(i_y, H, patch_halo[1])
-    p_x, i_x = _new_slices(i_x, W, patch_halo[2])
-
-    patch_index = (p_c, p_z, p_y, p_x)
-    index = (i_c, i_z, i_y, i_x)
-    return patch[patch_index], index
 
 
 def number_of_features_per_level(init_channel_number, num_levels):

@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Type, Iterable, Mapping
+from typing import List, Mapping
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
 import prody as pr
@@ -9,11 +9,8 @@ from pathlib import Path
 
 logger = get_logger('Featurizer')
 
-# WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
-GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
-
-def apbsInput(pqr_fname, grid_fname, dielec_const, grid_size):
+def apbsInput(pqr_fname:str, grid_fname:str, dielec_const:float, grid_size:int):
     return f"""read
     mol pqr {pqr_fname}
 end
@@ -55,10 +52,8 @@ class TmpFile:
 
 
 class ApbsGridCollection:
-    ligand_mask_radius_defaults = 6.5
-    grid_size_default = 161
 
-    def __init__(self, structure, ligand, grid_config, dielec_const_list,
+    def __init__(self, structure, ligand, grid_size:int, ligand_mask_radius:float, dielec_const_list,
                  tmp_data_folder: str, reuse_grids: bool, name: str, pdb2pqrPath: str, cleanup: bool):
         """
         pot_grids: Mapping dielectric constant -> PotGrid
@@ -69,8 +64,8 @@ class ApbsGridCollection:
         self.pdb2pqrPath = pdb2pqrPath
         self.cleanup = cleanup
 
-        radius = grid_config.get('ligand_mask_radius', self.ligand_mask_radius_defaults)
-        self.grid_size = grid_config.get('grid_size', self.grid_size_default)
+        radius = ligand_mask_radius
+        self.grid_size = grid_size
 
         pot_grids, labels = self._genGrids(structure, ligand, self.grid_size, radius, dielec_const_list)
 

@@ -4,11 +4,12 @@ from multiprocessing import Lock
 import h5py
 import numpy as np
 from pytorch3dunet.augment.utils import Transformer
-from pytorch3dunet.augment.transforms import Transform, Phase
+from pytorch3dunet.augment.transforms import Transform
 from pytorch3dunet.augment.standardize import Stats
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import get_logger, Phase
 from pytorch3dunet.datasets.featurizer import Transformable, LabelClass
 from pytorch3dunet.datasets.utils import default_prediction_collate, get_slice_builder
+from pytorch3dunet.datasets.config import LoadersConfig
 from typing import Iterable, Type
 from torch.utils.data import Dataset
 from abc import ABC, abstractmethod
@@ -25,7 +26,7 @@ class AbstractDataset(Dataset, ABC):
 
     @classmethod
     @abstractmethod
-    def create_datasets(cls, dataset_config, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
+    def create_datasets(cls, loaders_config: LoadersConfig, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
         pass
 
     def set_transform_seeds(self, seed: int) -> None:
@@ -38,9 +39,7 @@ class AbstractDataset(Dataset, ABC):
                  featuresTypes: Iterable[Type[Transformable]],
                  tmp_data_folder,
                  phase: Phase,
-                 slice_builder_config,
                  transformer_config,
-                 random_seed=0,
                  allowRotations=True,
                  debug_str=None):
 
@@ -70,7 +69,7 @@ class AbstractDataset(Dataset, ABC):
             labels = None
 
         # build slice indices for raw and label data sets
-        slice_builder = get_slice_builder(raws, labels, slice_builder_config)
+        slice_builder = get_slice_builder(raws=raws, labels=labels, config=None)
         self.raw_slices = slice_builder.raw_slices
         self.label_slices = slice_builder.label_slices
 

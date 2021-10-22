@@ -5,7 +5,6 @@ import torch
 from pathlib import Path
 from pytorch3dunet.datasets.pdb import PDBDataset
 from pytorch3dunet.unet3d.utils import get_logger
-from pytorch3dunet.unet3d.utils import remove_halo
 import prody
 
 logger = get_logger('UNetPredictor')
@@ -133,12 +132,8 @@ class PdbPredictor(_AbstractPredictorPdb):
 
                         logger.info(f'Saving predictions for slice:{index}...')
 
-                        if patch_halo is None:
-                            logger.info(f'Skipping halo removal because of Trivial Slice Builder (TO BE IMPLEMENTED)')
-                            u_prediction, u_index = pred, index
-                        else:
-                            # remove halo in order to avoid block artifacts in the output probability maps
-                            u_prediction, u_index = remove_halo(pred, index, volume_shape, patch_halo)
+                        u_prediction, u_index = pred, index
+
                         # accumulate probabilities into the output prediction array
                         prediction_map[u_index] += u_prediction
                         # count voxel visits for normalization

@@ -3,32 +3,39 @@ from pathlib import Path
 from multiprocessing import Lock, Pool
 import glob
 from pytorch3dunet.augment.transforms import Phase
-from pytorch3dunet.datasets.basedataset import AbstractDataset, default_prediction_collate
+from pytorch3dunet.datasets.base import AbstractDataset, default_prediction_collate
+from pytorch3dunet.datasets.config import LoadersConfig, PdbDataConfig
 from pytorch3dunet.datasets.utils_pdb import PdbDataHandler
 from pytorch3dunet.unet3d.utils import get_logger
 import uuid
 from torch.utils.data._utils.collate import default_collate
 from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures
 from typing import Iterable, Optional
+from dataclasses import  dataclass
 
 logger = get_logger('PdbDataset')
 lock = Lock()
 
+@dataclass
+class ExeConfig:
+    tmp_folder : str
+    pdb2pqrPath: str
+    cleanup: bool
+    reuse_grids : bool
+    randomize_name: bool
 
 class PDBDataset(AbstractDataset):
 
-    def __init__(self, src_data_folder, name, exe_config,
+    def __init__(self, src_data_folder, name, exe_config : ExeConfig,
                  phase:str,
-                 slice_builder_config,
-                 pregrid_transformer_config,
-                 grid_config,
+                 grid_size: int,
+                 ligand_mask_radius:float,
                  features: ComposedFeatures,
                  transformer_config,
-                 random_seed=0,
                  force_rotations=False):
 
-        reuse_grids = exe_config.get('reuse_grids', False)
-        randomize_name = exe_config.get('randomize_name', False)
+        reuse_grids = exe_config.reuse_grids
+        randomize_name = exe_config.randomize_name
 
         self.src_data_folder = src_data_folder
 
@@ -38,31 +45,30 @@ class PDBDataset(AbstractDataset):
             uuids = None
             if reuse_grids:
                 try:
-                    existing = next(glob.iglob(str(Path(exe_config['tmp_folder']) / f"{name}_*")))
+                    existing = next(glob.iglob(str(Path(exe_config.tmp_folder) / f"{name}_*")))
                     uuids = existing.split('_')[-1]
                     logger.info(f'Reusing existing uuid={uuids}')
                 except StopIteration:
                     pass
             if uuids is None:
                 uuids = uuid.uuid1()
-            tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}_{uuids}")
+            tmp_data_folder = str(Path(exe_config.tmp_folder) / f"{name}_{uuids}")
 
         else:
-            tmp_data_folder = str(Path(exe_config['tmp_folder']) / f"{name}")
+            tmp_data_folder = str(Path(exe_config.tmp_folder) / f"{name}")
 
         os.makedirs(tmp_data_folder, exist_ok=True)
         logger.debug(f'tmp_data_folder: {tmp_data_folder}')
 
         try:
             self.pdbDataHandler = PdbDataHandler(src_data_folder=src_data_folder, name=name,
-                                                 pregrid_transformer_config=pregrid_transformer_config,
                                                  tmp_data_folder=tmp_data_folder,
-                                                 pdb2pqrPath=exe_config['pdb2pqrPath'],
-                                                 cleanup=exe_config.get('cleanup', False),
-                                                 reuse_grids=reuse_grids
+                                                 pdb2pqrPath=exe_config.pdb2pqrPath,
+                                                 cleanup=exe_config.cleanup,
+                                                 reuse_grids=reuse_grids,
                                                  )
 
-            raws, labels = self.pdbDataHandler.getRawsLabels(features=features, grid_config=grid_config)
+            raws, labels = self.pdbDataHandler.getRawsLabels(features=features, grid_size=grid_size, ligand_mask_radius=ligand_mask_radius)
             allowRotations = self.pdbDataHandler.checkRotations()
             if force_rotations:
                 allowRotations = True
@@ -77,13 +83,11 @@ class PDBDataset(AbstractDataset):
         if phase == 'test':
             labels = None
 
-        super().__init__(name, raws, labels,
+        super().__init__(name=name, raws=raws, labels=labels,
                          featuresTypes=features.feature_types,
                          tmp_data_folder=tmp_data_folder,
                          phase=phase,
-                         slice_builder_config=slice_builder_config,
                          transformer_config=transformer_config,
-                         random_seed=random_seed,
                          allowRotations=allowRotations,
                          debug_str=f'{name}')
 
@@ -106,19 +110,16 @@ class PDBDataset(AbstractDataset):
         samples = [data for _,_,data in batch]
         return default_prediction_collate(samples)
 
-
     @classmethod
-    def create_datasets(cls, dataset_config, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
-        phase_config = dataset_config[phase]
+    def create_datasets(cls, loaders_config: LoadersConfig, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
 
-        logger.info(f"Slice builder config: {phase_config['slice_builder']}")
-
-        file_paths = phase_config['file_paths']
+        data_paths = loaders_config.data_config.data_paths
+        file_paths = data_paths[Phase.from_str(phase)]
         file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
-        args = ((file_path, name, dataset_config, phase, features_config, transformer_config) for file_path, name in file_paths)
+        args = ((file_path, name, loaders_config, phase, features_config, transformer_config) for file_path, name in file_paths)
 
-        pdb_workers = dataset_config.get('pdb_workers', 0)
+        pdb_workers = loaders_config.pdb_workers
 
         if pdb_workers > 0:
             logger.info(f'Parallelizing dataset creation among {pdb_workers} workers')
@@ -128,25 +129,24 @@ class PDBDataset(AbstractDataset):
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
 
+
+
 def create_dataset(arg) -> Optional[PDBDataset]:
-    file_path, name, dataset_config, phase, feature_config, transformer_config = arg
-    phase_config = dataset_config[phase]
-    fail_on_error = dataset_config.get('fail_on_error', False)
-    force_rotations = dataset_config.get('force_rotations', False)
+    file_path, name, loaders_config, phase, feature_config, transformer_config = arg
+    fail_on_error = loaders_config.fail_on_error
+    force_rotations = loaders_config.force_rotations
 
     features: ComposedFeatures = get_features(feature_config)
 
-    # load data augmentation configuration
-    pregrid_transformer_config = phase_config.get('pdb_transformer', [])
-    grid_config = dataset_config.get('grid_config', {})
+    pdb_config : PdbDataConfig = loaders_config.data_config
 
-    # load slice builder config
-    slice_builder_config = phase_config['slice_builder']
+    grid_size = loaders_config.grid_size
 
-    # load instance sampling configuration
-    random_seed = phase_config.get('random_seed', 0)
-
-    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup', 'reuse_grids'] if k in dataset_config.keys()}
+    exe_config = ExeConfig(tmp_folder=loaders_config.tmp_folder,
+                           pdb2pqrPath=pdb_config.pdb2pqrPath,
+                           cleanup=loaders_config.cleanup,
+                           reuse_grids=pdb_config.reuse_grids,
+                           randomize_name=pdb_config.randomize_name)
 
     try:
         logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
@@ -154,13 +154,11 @@ def create_dataset(arg) -> Optional[PDBDataset]:
                              name=name,
                              exe_config=exe_config,
                              phase=phase,
-                             slice_builder_config=slice_builder_config,
                              features=features,
                              transformer_config=transformer_config,
-                             pregrid_transformer_config=pregrid_transformer_config,
-                             grid_config=grid_config,
-                             random_seed=random_seed,
-                             force_rotations=force_rotations)
+                             grid_size=grid_size,
+                             force_rotations=force_rotations,
+                             ligand_mask_radius=pdb_config.ligand_mask_radius)
         return dataset
     except Exception as e:
         if fail_on_error:
