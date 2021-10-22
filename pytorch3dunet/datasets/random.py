@@ -65,14 +65,12 @@ class RandomDataset(AbstractDataset):
         return self.name, super().__getitem__(idx)
 
     @classmethod
-    def create_datasets(cls, loaders_config:LoadersConfig, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
+    def create_datasets(cls, loaders_config:LoadersConfig, pdb_workers:int, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
         random_data_config : RandomDataConfig = loaders_config.data_config
 
         names = [str(i) for i in range(random_data_config.num[Phase.from_str(phase)])]
 
         args = ((name, loaders_config, phase, features_config, transformer_config) for name in names)
-
-        pdb_workers = loaders_config.pdb_workers
 
         if pdb_workers > 0:
             logger.info(f'Parallelizing dataset creation among {pdb_workers} workers')

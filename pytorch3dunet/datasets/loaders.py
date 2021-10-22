@@ -4,14 +4,15 @@ from torch.utils.data import DataLoader, ConcatDataset
 from pytorch3dunet.unet3d.utils import get_logger, profile
 from pytorch3dunet.datasets.base import AbstractDataset, default_prediction_collate
 from pytorch3dunet.datasets.utils import _loader_classes
-from pytorch3dunet.datasets.config import LoadersConfig
+from pytorch3dunet.datasets.config import LoadersConfig, RunConfig
 
 MAX_SEED = 2 ** 32 - 1
 
 logger = get_logger('Loaders')
 
 
-def get_train_loaders(config, loaders_config: LoadersConfig):
+def get_train_loaders(config, runconfig: RunConfig):
+    loaders_config = runconfig.loaders_config
     features_config = config['featurizer']
     transformer_config = config['transformer']
 
@@ -36,7 +37,8 @@ def get_train_loaders(config, loaders_config: LoadersConfig):
         # Will use standard collate function
         collate_fn = None
 
-    train_datasets = dataset_class.create_datasets(loaders_config=loaders_config, features_config=features_config,
+    train_datasets = dataset_class.create_datasets(loaders_config=loaders_config, pdb_workers=runconfig.pdb_workers,
+                                                   features_config=features_config,
                                                    transformer_config=transformer_config, phase='train')
 
     def train_dataloader_gen():
@@ -44,14 +46,15 @@ def get_train_loaders(config, loaders_config: LoadersConfig):
             seed = torch.randint(size=(1,), high=MAX_SEED).item()
             dataset.set_transform_seeds(seed)
         return DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers,
-                          collate_fn=collate_fn, pin_memory=True)
+                          collate_fn=collate_fn, pin_memory=loaders_config.pin_memory)
 
-    val_datasets = dataset_class.create_datasets(loaders_config=loaders_config, features_config=features_config,
-                                                 transformer_config=transformer_config, phase='val')
+    val_datasets = dataset_class.create_datasets(loaders_config=loaders_config, pdb_workers=runconfig.pdb_workers,
+                                                 features_config=features_config, transformer_config=transformer_config,
+                                                 phase='val')
     # don't shuffle during validation: useful when showing how predictions for a given batch get better over time
     val_Dataloader = DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=False,
                                 num_workers=num_workers,
-                                collate_fn=collate_fn, pin_memory=True)
+                                collate_fn=collate_fn, pin_memory=loaders_config.pin_memory)
 
     def val_dataloader_gen():
         return val_Dataloader
@@ -107,4 +110,4 @@ def get_test_loaders(config):
             collate_fn = default_prediction_collate
 
         yield DataLoader(test_dataset, batch_size=batch_size, num_workers=num_workers,
-                         collate_fn=collate_fn, pin_memory=True)
+                         collate_fn=collate_fn, pin_memory=loaders_config.pin_memory)

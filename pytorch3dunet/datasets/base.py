@@ -26,7 +26,8 @@ class AbstractDataset(Dataset, ABC):
 
     @classmethod
     @abstractmethod
-    def create_datasets(cls, loaders_config: LoadersConfig, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
+    def create_datasets(cls, loaders_config: LoadersConfig, pdb_workers: int,
+                        features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
         pass
 
     def set_transform_seeds(self, seed: int) -> None:

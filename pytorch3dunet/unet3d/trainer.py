@@ -1,11 +1,11 @@
 import os
-
 import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import h5py
 from pytorch3dunet.datasets.loaders import get_train_loaders
+from pytorch3dunet.datasets.config import LoadersConfig, RunConfig
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric, get_log_metrics
 from pytorch3dunet.unet3d.model import get_model
@@ -14,6 +14,7 @@ from pytorch3dunet.unet3d.utils import profile, get_logger, \
     create_lr_scheduler, get_number_of_learnable_parameters
 from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features
 from pytorch3dunet.augment.utils import Transformer
+from typing import Mapping
 from . import utils
 
 logger = get_logger('UNet3DTrainer')
@@ -76,7 +77,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
 
 class UNet3DTrainerBuilder:
     @staticmethod
-    def build(config, loaders_config):
+    def build(config:Mapping, run_config: RunConfig):
         # Create the model
 
         features: BaseFeatureList = get_features(config['featurizer'])
@@ -107,7 +108,7 @@ class UNet3DTrainerBuilder:
         log_criterions = get_log_metrics(config)
 
         # Create data loaders
-        loaders = get_train_loaders(config=config, loaders_config=loaders_config)
+        loaders = get_train_loaders(config=config, runconfig=run_config)
 
         # Create the optimizer
         optimizer = create_optimizer(config['optimizer'], model)

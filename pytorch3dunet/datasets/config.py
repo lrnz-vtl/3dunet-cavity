@@ -3,10 +3,38 @@ from pytorch3dunet.unet3d.utils import get_logger, Phase
 from typing import Mapping, Union, List
 from pathlib import Path
 import itertools
+import pprint
 
-MAX_SEED = 2 ** 32 - 1
+default_grid_size = 161
+default_ligand_mask_radius = 6.5
+default_batch_size = 1
+default_pin_memory = False
+default_benchmark = False
+
+default_pdb2pqrPath = 'pdb2pqr'
 
 logger = get_logger('Loaders')
+
+
+def todict(obj, classkey=None):
+    if isinstance(obj, dict):
+        data = {}
+        for (k, v) in obj.items():
+            data[k] = todict(v, classkey)
+        return data
+    elif hasattr(obj, "_ast"):
+        return todict(obj._ast())
+    elif hasattr(obj, "__iter__") and not isinstance(obj, str):
+        return [todict(v, classkey) for v in obj]
+    elif hasattr(obj, "__dict__"):
+        data = dict([(key, todict(value, classkey))
+            for key, value in obj.__dict__.items()
+            if not callable(value) and not key.startswith('_')])
+        if classkey is not None and hasattr(obj, "__class__"):
+            data[classkey] = obj.__class__.__name__
+        return data
+    else:
+        return obj
 
 
 def default_if_none(x, default):
@@ -15,10 +43,10 @@ def default_if_none(x, default):
 
 class PdbDataConfig:
     data_paths = Mapping[Phase, List[str]]
-    pdb2pqrPath: str = 'pdb2pqr'
+    pdb2pqrPath: str = default_pdb2pqrPath
     reuse_grids: bool = False
     randomize_name: bool = False
-    ligand_mask_radius: float = 6.5
+    ligand_mask_radius: float = default_ligand_mask_radius
 
     def __init__(self, dataFolder: str, train: List[str], val: List[str], test: List[str],
                  pdb2pqrPath: str = None, reuse_grids: bool = None, randomize_name: bool = None,
@@ -40,6 +68,11 @@ class PdbDataConfig:
             assert set(left).isdisjoint(right), \
                 f"{leftPhase} and {rightPhase} file paths overlap. Train, val and test sets must be separate"
 
+    def pretty_format(self):
+        out = {k: v for k, v in vars(self).items() if k != 'data_paths'}
+        out['data_paths'] = vars(self.data_paths)
+        return pprint.pformat(out, indent=4)
+
 
 class RandomDataConfig:
     num: Mapping[Phase,int]
@@ -51,31 +84,35 @@ class RandomDataConfig:
 class LoadersConfig:
     dataset_cls_str: str
     data_config = Union[PdbDataConfig, RandomDataConfig]
-    batch_size: int = 1
+    num_workers: int
+    batch_size: int = default_batch_size
     force_rotations: bool = False
     fail_on_error: bool = False
     random_mode: bool = False
     cleanup: bool = False
-    grid_size: int = 161
+    pin_memory: bool = default_pin_memory
+    grid_size: int = default_grid_size
 
     def __init__(self, runFolder: Path, runconfig: Mapping,
-                 nworkers: int, pdbworkers: int,
+                 nworkers: int,
                  grid_size: Mapping,
                  dataset: str = None,
                  batch_size: int = None,
                  fail_on_error: bool = None,
                  force_rotations: bool = None,
-                 cleanup: bool = None):
+                 cleanup: bool = None,
+                 pin_memory: bool = None):
 
         runconfig = dict(runconfig)
 
         self.num_workers = nworkers
-        self.pdb_workers = pdbworkers
+
         self.batch_size = default_if_none(batch_size, self.batch_size)
         self.grid_size = default_if_none(grid_size, self.grid_size)
         self.fail_on_error = default_if_none(fail_on_error, self.fail_on_error)
         self.force_rotations = default_if_none(force_rotations, self.force_rotations)
         self.cleanup = default_if_none(cleanup, self.cleanup)
+        self.pin_memory = default_if_none(pin_memory, self.pin_memory)
 
         self.tmp_folder = str(runFolder / 'tmp')
 
@@ -88,3 +125,20 @@ class LoadersConfig:
         else:
             self.dataset_cls_str = 'PDBDataset' if dataset is None else dataset
             self.data_config = PdbDataConfig(**runconfig)
+
+
+class RunConfig:
+    loaders_config: LoadersConfig
+    pdb_workers: int
+    benchmark: bool = default_benchmark
+
+    def __init__(self, runFolder: Path, runconfig: Mapping,
+                 nworkers: int, pdb_workers: int,
+                 loaders_config: Mapping):
+
+        self.pdb_workers = pdb_workers
+        self.benchmark = runconfig.get('benchmark', self.benchmark)
+        self.loaders_config = LoadersConfig(runFolder, runconfig, nworkers, **loaders_config)
+
+    def pretty_format(self):
+        return pprint.pformat(todict(self), indent=4)
