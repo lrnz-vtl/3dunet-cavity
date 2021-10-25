@@ -1,10 +1,10 @@
 trainer:
-  max_num_epochs: 4
+  max_num_epochs: 2
   eval_score_higher_is_better: true
-  max_num_iterations: 10
-  log_after_iters: 3
+  max_num_iterations: 150000
+  log_after_iters: 1
   resume: null
-  validate_after_iters: 2
+  validate_after_iters: 1
 eval_metric:
   name: MeanIoU
   ignore_index: null

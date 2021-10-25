@@ -1,3 +1,4 @@
+import contextlib
 import os
 import torch
 import torch.nn as nn
@@ -15,6 +16,8 @@ from pytorch3dunet.unet3d.utils import profile, get_logger, \
 from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features
 from pytorch3dunet.augment.utils import Transformer
 from typing import Mapping
+import torch
+from torch.profiler import profile as torch_profile, record_function, ProfilerActivity
 from . import utils
 
 logger = get_logger('UNet3DTrainer')
@@ -275,12 +278,16 @@ class UNet3DTrainer:
 
     @profile
     def fit(self):
+
         for i in range(self.num_epoch, self.max_num_epochs):
+
             logger.info(f'Entering training epoch {i}')
             trainLoaders = self.loaders['train']()
 
             # train for one epoch
-            should_terminate = self.train(trainLoaders)
+            with record_function("train"):
+            #with contextlib.nullcontext():
+                should_terminate = self.train(trainLoaders)
 
             if should_terminate:
                 logger.info('Stopping criterion is satisfied. Finishing training')

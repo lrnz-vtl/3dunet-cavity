@@ -135,9 +135,10 @@ class RunConfig:
     def __init__(self, runFolder: Path, runconfig: Mapping,
                  nworkers: int, pdb_workers: int,
                  loaders_config: Mapping):
-
+        runconfig = dict(runconfig)
         self.pdb_workers = pdb_workers
         self.benchmark = runconfig.get('benchmark', self.benchmark)
+        runconfig.pop('benchmark', None)
         self.loaders_config = LoadersConfig(runFolder, runconfig, nworkers, **loaders_config)
 
     def pretty_format(self):

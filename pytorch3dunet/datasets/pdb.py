@@ -111,15 +111,13 @@ class PDBDataset(AbstractDataset):
         return default_prediction_collate(samples)
 
     @classmethod
-    def create_datasets(cls, loaders_config: LoadersConfig, features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
-
+    def create_datasets(cls, loaders_config: LoadersConfig, pdb_workers: int,
+                        features_config, transformer_config, phase) -> Iterable[AbstractDataset]:
         data_paths = loaders_config.data_config.data_paths
         file_paths = data_paths[Phase.from_str(phase)]
         file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
         args = ((file_path, name, loaders_config, phase, features_config, transformer_config) for file_path, name in file_paths)
-
-        pdb_workers = loaders_config.pdb_workers
 
         if pdb_workers > 0:
             logger.info(f'Parallelizing dataset creation among {pdb_workers} workers')
