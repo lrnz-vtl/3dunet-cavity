@@ -285,7 +285,7 @@ class UNet3DTrainer:
             trainLoaders = self.loaders['train']()
 
             # train for one epoch
-            with record_function("train"):
+            with record_function("3dunet-train"):
             #with contextlib.nullcontext():
                 should_terminate = self.train(trainLoaders)
 
@@ -313,7 +313,8 @@ class UNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
+            with record_function("3dunet-split_training_batch"):
+                names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
             logger.debug(f'Forward samples {names}')
 
             if self.dump_inputs:
@@ -329,53 +330,57 @@ class UNet3DTrainer:
 
             if self.dry_run:
                 continue
-            output, loss = self._forward_pass(input, target, weight)
+            with record_function("3dunet-forward_pass"):
+                output, loss = self._forward_pass(input, target, weight)
 
             train_losses.update(loss.item(), self._batch_size(input))
 
             # compute gradients and update parameters
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            with record_function("3dunet-optimize"):
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
             if self.num_iterations % self.validate_after_iters == 0:
-                # set the model in eval mode
-                self.model.eval()
-                # evaluate on validation set
-                eval_score = self.validate()
-                # set the model back to training mode
-                self.model.train()
+                with record_function("3dunet-validate"):
+                    # set the model in eval mode
+                    self.model.eval()
+                    # evaluate on validation set
+                    eval_score = self.validate()
+                    # set the model back to training mode
+                    self.model.train()
 
-                # adjust learning rate if necessary
-                if isinstance(self.scheduler, ReduceLROnPlateau):
-                    self.scheduler.step(eval_score)
-                else:
-                    self.scheduler.step()
-                # log current learning rate in tensorboard
-                self._log_lr()
-                # remember best validation metric
-                is_best = self._is_best_eval_score(eval_score)
+                    # adjust learning rate if necessary
+                    if isinstance(self.scheduler, ReduceLROnPlateau):
+                        self.scheduler.step(eval_score)
+                    else:
+                        self.scheduler.step()
+                    # log current learning rate in tensorboard
+                    self._log_lr()
+                    # remember best validation metric
+                    is_best = self._is_best_eval_score(eval_score)
 
-                # save checkpoint
-                self._save_checkpoint(is_best)
+                    # save checkpoint
+                    self._save_checkpoint(is_best)
 
             if self.num_iterations % self.log_after_iters == 0:
-                # if model contains final_activation layer for normalizing logits apply it, otherwise both
-                # the evaluation metric as well as images in tensorboard will be incorrectly computed
-                if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    output = self.model.final_activation(output)
+                with record_function("3dunet-validate"):
+                    # if model contains final_activation layer for normalizing logits apply it, otherwise both
+                    # the evaluation metric as well as images in tensorboard will be incorrectly computed
+                    if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
+                        output = self.model.final_activation(output)
 
-                # compute eval criterion
-                if not self.skip_train_validation:
-                    eval_score = self.eval_criterion(output, target)
-                    train_eval_scores.update(eval_score.item(), self._batch_size(input))
+                    # compute eval criterion
+                    if not self.skip_train_validation:
+                        eval_score = self.eval_criterion(output, target)
+                        train_eval_scores.update(eval_score.item(), self._batch_size(input))
 
-                # log stats, params and images
-                logger.info(
-                    f'Training stats. Loss: {train_losses.avg}. Evaluation score: {train_eval_scores.avg}')
-                self._log_stats('train', train_losses.avg, train_eval_scores.avg, {})
-                self._log_params()
-                self._log_images(input, target, output, 'train_')
+                    # log stats, params and images
+                    logger.info(
+                        f'Training stats. Loss: {train_losses.avg}. Evaluation score: {train_eval_scores.avg}')
+                    self._log_stats('train', train_losses.avg, train_eval_scores.avg, {})
+                    self._log_params()
+                    self._log_images(input, target, output, 'train_')
 
             if self.should_stop():
                 return True
