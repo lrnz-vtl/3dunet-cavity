@@ -40,7 +40,12 @@ if __name__ == '__main__':
             repeat=1)
     else:
         schedule = None
+    if args.memory:
+        profile_memory = True
+    else:
+        profile_memory = False
 
-    with torch_profile(on_trace_ready=tensorboard_trace_handler(logdir), schedule=schedule, with_stack=True) if args.profile \
+    with torch_profile(on_trace_ready=tensorboard_trace_handler(logdir), profile_memory=profile_memory,
+                       schedule=schedule, with_stack=True) if args.profile \
             else contextlib.nullcontext() as prof:
         trainer.fit()
