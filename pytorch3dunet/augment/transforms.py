@@ -254,7 +254,7 @@ class ComposedTransform(Transform, ABC):
         return self.state
 
     def __setstate__(self, state):
-        logger.warning(f'Pickling the {type(self).__name__} instance - This has not been properly tested')
+        # logger.warning(f'Pickling the {type(self).__name__} instance - This has not been properly tested')
         self.transforms = []
         common_config, self.dtype, self.convert_to_torch, args = state
         for i, (cls, options_conf, phase, iseed) in enumerate(args):

@@ -1,19 +1,13 @@
 import torch
 import yaml
-from pytorch3dunet.unet3d.utils import get_logger
-from pytorch3dunet.datasets.config import RunConfig
 from pathlib import Path
 from argparse import ArgumentParser
 import os
-
 from pytorch3dunet.unet3d import utils
-
-logger = utils.get_logger('ConfigLoader')
+import logging
+from pytorch3dunet.unet3d.utils import set_default_log_level, set_filename
 
 checkpointname = "checkpoint"
-
-logger = get_logger('TrainingSetup')
-
 
 def load_config(runconfigPath, nworkers, pdb_workers, device_str):
     runconfig = yaml.safe_load(open(runconfigPath, 'r'))
@@ -22,9 +16,11 @@ def load_config(runconfigPath, nworkers, pdb_workers, device_str):
 
     config = yaml.safe_load(open(train_config, 'r'))
 
+    from pytorch3dunet.datasets.config import RunConfig
     class_config = RunConfig(runFolder=runFolder, runconfig=runconfig, nworkers=nworkers, pdb_workers=pdb_workers,
                           loaders_config=config['loaders'])
 
+    logger = utils.get_logger('ConfigLoader')
     logger.info(f'Read config:\n{class_config.pretty_format()}')
 
     config['dry_run'] = runconfig.get('dry_run', False)
@@ -33,6 +29,7 @@ def load_config(runconfigPath, nworkers, pdb_workers, device_str):
     os.makedirs(class_config.loaders_config.tmp_folder, exist_ok=True)
 
     config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)
+
 
     if device_str is not None:
         logger.info(f"Device specified in config: '{device_str}'")
@@ -61,13 +58,18 @@ def parse_args():
                         help=f"Device")
     parser.add_argument("--debug", dest='debug', default=False, action='store_true')
     parser.add_argument("--profile", dest='profile', default=False, action='store_true')
+    parser.add_argument("--logfile", dest='logfile', type=str, required=False)
 
     args = parser.parse_args()
+
+    if args.debug:
+        set_default_log_level(logging.DEBUG)
+    if args.logfile:
+        set_filename(args.logfile)
+
     runconfig = args.runconfig
     nworkers = int(args.numworkers)
     pdbworkers = int(args.pdbworkers)
-
-
 
     config, class_config = load_config(runconfig, nworkers, pdbworkers, args.device)
     return args, config, class_config

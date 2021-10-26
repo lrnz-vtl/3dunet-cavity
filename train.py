@@ -1,22 +1,16 @@
 import torch
-import logging
 from pytorch3dunet.datasets.utils import get_class
-from pytorch3dunet.unet3d.utils import get_logger, set_default_log_level
-from pytorch3dunet.unet3d.config import load_config, parse_args
+from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.config import parse_args
 import contextlib
 from pathlib import Path
-from torch.profiler import profile as torch_profile, record_function, ProfilerActivity, tensorboard_trace_handler
-
-logger = get_logger('TrainingSetup')
-
+from torch.profiler import profile as torch_profile, tensorboard_trace_handler
 
 if __name__ == '__main__':
 
     args, config, class_config = parse_args()
 
-    if args.debug:
-        set_default_log_level(logging.DEBUG)
-
+    logger = get_logger('TrainingSetup')
     logger.debug(f'Read Config is: {config}')
 
     manual_seed = config.get('manual_seed', None)
@@ -37,11 +31,6 @@ if __name__ == '__main__':
     logdir = str(Path(config['trainer']['checkpoint_dir']) / 'profile')
     if args.profile:
         logger.info(f'Saving profile logs to {logdir}')
-
-    # with torch_profile(activities=[ProfilerActivity.CPU], record_shapes=True,
-    #                    on_trace_ready=tensorboard_trace_handler(logdir), with_stack=True) if args.profile \
-    #         else contextlib.nullcontext() as prof:
-    #     trainer.fit()
 
     with torch_profile(on_trace_ready=tensorboard_trace_handler(logdir), with_stack=True) if args.profile \
             else contextlib.nullcontext() as prof:

@@ -110,10 +110,17 @@ def save_network_output(output_path, output, logger=None):
 
 loggers = {}
 default_level = logging.INFO
+filename = None
 
 def set_default_log_level(level):
     global default_level
     default_level = level
+
+def set_filename(fname):
+    global filename
+    filename = fname
+    if os.path.exists(filename):
+        os.remove(filename)
 
 def get_logger(name, level=None):
     global loggers
@@ -128,11 +135,17 @@ def get_logger(name, level=None):
         logger = logging.getLogger(name)
         logger.setLevel(level)
         # Logging to console
-        stream_handler = logging.StreamHandler(sys.stdout)
+
         formatter = logging.Formatter(
             '%(asctime)s [%(threadName)s] %(levelname)s %(name)s - %(message)s')
+
+        stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
+        if filename is not None:
+            stream_handler = logging.FileHandler(filename)
+            stream_handler.setFormatter(formatter)
+            logger.addHandler(stream_handler)
 
         loggers[name] = logger
 
