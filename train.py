@@ -32,6 +32,15 @@ if __name__ == '__main__':
     if args.profile:
         logger.info(f'Saving profile logs to {logdir}')
 
-    with torch_profile(on_trace_ready=tensorboard_trace_handler(logdir), with_stack=True) if args.profile \
+    if args.schedule:
+        schedule = torch.profiler.schedule(
+            wait=2,
+            warmup=2,
+            active=6,
+            repeat=1)
+    else:
+        schedule = None
+
+    with torch_profile(on_trace_ready=tensorboard_trace_handler(logdir), schedule=schedule, with_stack=True) if args.profile \
             else contextlib.nullcontext() as prof:
         trainer.fit()
