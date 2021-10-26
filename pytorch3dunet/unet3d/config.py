@@ -61,6 +61,7 @@ def parse_args():
     parser.add_argument("--logfile", dest='logfile', type=str, required=False)
     parser.add_argument("--schedule", dest='schedule', default=False, action='store_true')
     parser.add_argument("--memory", dest='memory', default=False, action='store_true')
+    parser.add_argument("--nostack", dest='nostack', default=False, action='store_true')
 
     args = parser.parse_args()
 
