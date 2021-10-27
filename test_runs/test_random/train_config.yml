@@ -3,7 +3,6 @@ trainer:
   eval_score_higher_is_better: true
   max_num_iterations: 150000
   log_after_iters: 1
-  resume: null
   validate_after_iters: 1
 eval_metric:
   name: MeanIoU

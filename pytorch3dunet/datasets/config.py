@@ -10,6 +10,7 @@ default_ligand_mask_radius = 6.5
 default_batch_size = 1
 default_pin_memory = False
 default_benchmark = False
+default_mixed = False
 
 default_pdb2pqrPath = 'pdb2pqr'
 
@@ -116,8 +117,7 @@ class LoadersConfig:
 
         self.tmp_folder = str(runFolder / 'tmp')
 
-        self.random_mode = runconfig.get('random', self.random_mode)
-        runconfig.pop('random', None)
+        self.random_mode = runconfig.pop('random', self.random_mode)
 
         if self.random_mode:
             self.dataset_cls_str = 'RandomDataset' if dataset is None else dataset
@@ -130,16 +130,20 @@ class LoadersConfig:
 class RunConfig:
     loaders_config: LoadersConfig
     pdb_workers: int
+    profile: bool
     benchmark: bool = default_benchmark
+    mixed: bool = default_mixed
 
     def __init__(self, runFolder: Path, runconfig: Mapping,
                  nworkers: int, pdb_workers: int,
-                 loaders_config: Mapping):
+                 loaders_config: Mapping,
+                 profile:bool):
         runconfig = dict(runconfig)
         self.pdb_workers = pdb_workers
-        self.benchmark = runconfig.get('benchmark', self.benchmark)
-        runconfig.pop('benchmark', None)
+        self.benchmark = runconfig.pop('benchmark', self.benchmark)
+        self.mixed = runconfig.pop('mixed', self.mixed)
         self.loaders_config = LoadersConfig(runFolder, runconfig, nworkers, **loaders_config)
+        self.profile = profile
 
     def pretty_format(self):
         return pprint.pformat(todict(self), indent=4)

@@ -9,7 +9,7 @@ from pytorch3dunet.unet3d.utils import set_default_log_level, set_filename
 
 checkpointname = "checkpoint"
 
-def load_config(runconfigPath, nworkers, pdb_workers, device_str):
+def load_config(runconfigPath, nworkers:int, pdb_workers:int, device_str:str, profile: bool):
     runconfig = yaml.safe_load(open(runconfigPath, 'r'))
     runFolder = Path(runconfig.get('runFolder', Path(runconfigPath).parent))
     train_config = runFolder / 'train_config.yml'
@@ -18,7 +18,7 @@ def load_config(runconfigPath, nworkers, pdb_workers, device_str):
 
     from pytorch3dunet.datasets.config import RunConfig
     class_config = RunConfig(runFolder=runFolder, runconfig=runconfig, nworkers=nworkers, pdb_workers=pdb_workers,
-                          loaders_config=config['loaders'])
+                          loaders_config=config['loaders'], profile=profile)
 
     logger = utils.get_logger('ConfigLoader')
     logger.info(f'Read config:\n{class_config.pretty_format()}')
@@ -74,5 +74,5 @@ def parse_args():
     nworkers = int(args.numworkers)
     pdbworkers = int(args.pdbworkers)
 
-    config, class_config = load_config(runconfig, nworkers, pdbworkers, args.device)
+    config, class_config = load_config(runconfig, nworkers, pdbworkers, args.device, args.profile)
     return args, config, class_config
