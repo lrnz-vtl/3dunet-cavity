@@ -17,7 +17,8 @@ from pytorch3dunet.augment.utils import Transformer
 from typing import Mapping
 import torch
 from torch.profiler import record_function
-from torch import autocast
+# from torch import autocast
+from torch.cuda.amp import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from . import utils
 
@@ -208,9 +209,10 @@ class UNet3DTrainer:
             if self.dry_run:
                 continue
 
-            with autocast(self.device.type) if self.run_config.mixed else nc() as ac:
+            with autocast() if self.run_config.mixed else nc() as ac:
+            # with autocast(self.device.type) if self.run_config.mixed else nc() as ac:
                 if ac is not None:
-                    logger.debug(f"Autocast to {ac.fast_dtype}")
+                    logger.debug(f"Autocast from {ac.prev} to {ac.fast_dtype} for {ac.device}")
                 with record_function("3dunet-forward_pass") if self.run_config.profile else nc():
                     output = self.model(input)
                     loss = self.loss_criterion(output, target)
