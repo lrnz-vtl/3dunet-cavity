@@ -189,7 +189,7 @@ class GpuRunningAverage:
             self.sum += value * n
 
     def value(self):
-        self.sum.item() / self.count
+        return self.sum.item() / self.count
 
 
 def find_maximum_patch_size(model, device):
