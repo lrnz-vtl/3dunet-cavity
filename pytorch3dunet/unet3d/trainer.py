@@ -187,8 +187,8 @@ class UNet3DTrainer:
 
     @profile
     def train(self, trainLoaders):
-        train_losses = utils.RunningAverage()
-        train_eval_scores = utils.RunningAverage()
+        train_losses = utils.GpuRunningAverage()
+        train_eval_scores = utils.GpuRunningAverage()
 
         # sets the model in training mode
         self.model.train()
@@ -219,7 +219,7 @@ class UNet3DTrainer:
 
             # TODO This might be slow
             with record_function("3dunet-loss_item") if self.run_config.profile else nc():
-                train_losses.update(loss.item(), self._batch_size(input))
+                train_losses.update(loss, self._batch_size(input))
 
             # compute gradients and update parameters
             with record_function("3dunet-optimize") if self.run_config.profile else nc():
@@ -267,9 +267,9 @@ class UNet3DTrainer:
     def validate(self):
         logger.info('Validating...')
 
-        val_losses = utils.RunningAverage()
-        val_scores = utils.RunningAverage()
-        log_scores = {type(log_criterion).__name__: utils.RunningAverage() for log_criterion in self.log_criterions}
+        val_losses = utils.GpuRunningAverage()
+        val_scores = utils.GpuRunningAverage()
+        log_scores = {type(log_criterion).__name__: utils.GpuRunningAverage() for log_criterion in self.log_criterions}
 
         if self.sample_plotter is not None:
             self.sample_plotter.update_current_dir()
@@ -291,7 +291,7 @@ class UNet3DTrainer:
                     output = self.model(input)
                     loss = self.loss_criterion(output, target)
 
-                val_losses.update(loss.item(), self._batch_size(input))
+                val_losses.update(loss, self._batch_size(input))
 
                 # if model contains final_activation layer for normalizing logits apply it, otherwise
                 # the evaluation metric will be incorrectly computed
@@ -302,12 +302,12 @@ class UNet3DTrainer:
                     self._log_images(input, target, output, 'val_')
 
                 eval_score = self.eval_criterion(output, target, pdbObjs)
-                val_scores.update(eval_score.item(), self._batch_size(input))
+                val_scores.update(eval_score, self._batch_size(input))
 
                 for log_criterion in self.log_criterions:
                     name = type(log_criterion).__name__
                     log_score = log_criterion(output, target, pdbObjs)
-                    log_scores[name].update(log_score.item(), self._batch_size(input))
+                    log_scores[name].update(log_score, self._batch_size(input))
 
                 if self.sample_plotter is not None:
                     self.sample_plotter(i, input, output, target, 'val')
@@ -316,10 +316,10 @@ class UNet3DTrainer:
                     # stop validation
                     break
 
-            self._log_stats('val', val_losses.avg, val_scores.avg,
-                            {name: log_score.avg for name, log_score in log_scores.items()})
-            logger.info(f'Validation finished. Loss: {val_losses.avg}. Evaluation score: {val_scores.avg}')
-            return val_scores.avg
+            self._log_stats('val', val_losses.value(), val_scores.value(),
+                            {name: log_score.value() for name, log_score in log_scores.items()})
+            logger.info(f'Validation finished. Loss: {val_losses.value()}. Evaluation score: {val_scores.value()}')
+            return val_scores.value()
 
     def save_inputs(self, names, input, target):
         dump_dir = f'{self.checkpoint_dir}/dumps'
@@ -362,12 +362,12 @@ class UNet3DTrainer:
         # compute eval criterion
         if not self.skip_train_validation:
             eval_score = self.eval_criterion(output, target)
-            train_eval_scores.update(eval_score.item(), self._batch_size(input))
+            train_eval_scores.update(eval_score, self._batch_size(input))
 
         # log stats, params and images
         logger.info(
-            f'Training stats. Loss: {train_losses.avg}. Evaluation score: {train_eval_scores.avg}')
-        self._log_stats('train', train_losses.avg, train_eval_scores.avg, {})
+            f'Training stats. Loss: {train_losses.value()}. Evaluation score: {train_eval_scores.value()}')
+        self._log_stats('train', train_losses.value(), train_eval_scores.value(), {})
         self._log_params()
         self._log_images(input, target, output, 'train_')
 

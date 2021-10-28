@@ -171,6 +171,26 @@ class RunningAverage:
         self.sum += value * n
         self.avg = self.sum / self.count
 
+    def value(self):
+        return self.avg
+
+
+class GpuRunningAverage:
+
+    def __init__(self):
+        self.count = 0
+        self.sum = None
+
+    def update(self, value, n=1):
+        self.count += n
+        if self.sum is None:
+            self.sum = value * n
+        else:
+            self.sum += value * n
+
+    def value(self):
+        self.sum.item() / self.count
+
 
 def find_maximum_patch_size(model, device):
     """Tries to find the biggest patch size that can be send to GPU for inference
