@@ -217,7 +217,9 @@ class UNet3DTrainer:
                     output = self.model(input)
                     loss = self.loss_criterion(output, target)
 
-            train_losses.update(loss.item(), self._batch_size(input))
+            # TODO This might be slow
+            with record_function("3dunet-loss_item") if self.run_config.profile else nc():
+                train_losses.update(loss.item(), self._batch_size(input))
 
             # compute gradients and update parameters
             with record_function("3dunet-optimize") if self.run_config.profile else nc():
