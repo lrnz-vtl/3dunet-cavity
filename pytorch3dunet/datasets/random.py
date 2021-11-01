@@ -10,7 +10,7 @@ from pytorch3dunet.datasets.config import LoadersConfig, RandomDataConfig
 import numpy as np
 from torch.utils.data._utils.collate import default_collate
 
-logger = get_logger('PdbDataset')
+logger = get_logger('RandomDataset')
 lock = Lock()
 
 class RandomDataset(AbstractDataset):
