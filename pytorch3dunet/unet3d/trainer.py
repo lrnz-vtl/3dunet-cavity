@@ -222,8 +222,10 @@ class UNet3DTrainer:
                     output = self.model(input)
                     if self.run_config.mixed:
                         assert output.dtype is torch.float16
+                        logger.debug("Autocast = true")
                     else:
                         assert output.dtype is torch.float32
+                        logger.debug("Autocast = false")
                     loss = self.loss_criterion(output, target)
                     assert loss.dtype is torch.float32
 
@@ -298,8 +300,10 @@ class UNet3DTrainer:
                     output = self.model(input)
                     if self.run_config.mixed:
                         assert output.dtype is torch.float16
+                        logger.debug("Autocast = true")
                     else:
                         assert output.dtype is torch.float32
+                        logger.debug("Autocast = false")
                     loss = self.loss_criterion(output, target)
                     assert loss.dtype is torch.float32
 
