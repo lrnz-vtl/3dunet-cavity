@@ -220,7 +220,12 @@ class UNet3DTrainer:
             with autocast(enabled=self.run_config.mixed):
                 with record_function("3dunet-forward_pass") if self.run_config.profile else nc():
                     output = self.model(input)
+                    if self.run_config.mixed:
+                        assert output.dtype is torch.float16
+                    else:
+                        assert output.dtype is torch.float32
                     loss = self.loss_criterion(output, target)
+                    assert loss.dtype is torch.float32
 
             # TODO This might be slow
             with record_function("3dunet-loss_item") if self.run_config.profile else nc():
@@ -291,7 +296,12 @@ class UNet3DTrainer:
 
                 with autocast(enabled=self.run_config.mixed):
                     output = self.model(input)
+                    if self.run_config.mixed:
+                        assert output.dtype is torch.float16
+                    else:
+                        assert output.dtype is torch.float32
                     loss = self.loss_criterion(output, target)
+                    assert loss.dtype is torch.float32
 
                 val_losses.update(loss, self._batch_size(input))
 
