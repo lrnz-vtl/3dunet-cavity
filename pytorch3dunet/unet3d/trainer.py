@@ -61,6 +61,7 @@ def build_trainer(config: Mapping, run_config: RunConfig):
     model = get_model(features=features, model_config=config['model'])
     # use DataParallel if more than 1 GPU available
     device = config['device']
+    gpus_to_use = 0
     if torch.cuda.device_count() > 1 and not device.type == 'cpu':
         if run_config.max_gpus is None:
             gpus_to_use = torch.cuda.device_count()
@@ -88,7 +89,7 @@ def build_trainer(config: Mapping, run_config: RunConfig):
     log_criterions = get_log_metrics(config)
 
     # Create data loaders
-    loaders = get_train_loaders(config=config, runconfig=run_config)
+    loaders = get_train_loaders(config=config, runconfig=run_config, gpus_to_use=gpus_to_use)
 
     # Create the optimizer
     optimizer = create_optimizer(config['optimizer'], model)
