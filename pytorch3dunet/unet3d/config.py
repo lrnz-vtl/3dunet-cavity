@@ -9,7 +9,7 @@ from pytorch3dunet.unet3d.utils import set_default_log_level, set_filename
 
 checkpointname = "checkpoint"
 
-def load_config(runconfigPath, nworkers:int, pdb_workers:int, device_str:str, profile: bool):
+def load_config(runconfigPath, nworkers:int, pdb_workers:int, max_gpus:int, device_str:str, profile: bool):
     runconfig = yaml.safe_load(open(runconfigPath, 'r'))
     runFolder = Path(runconfig.get('runFolder', Path(runconfigPath).parent))
     train_config = runFolder / 'train_config.yml'
@@ -17,7 +17,7 @@ def load_config(runconfigPath, nworkers:int, pdb_workers:int, device_str:str, pr
     config = yaml.safe_load(open(train_config, 'r'))
 
     from pytorch3dunet.datasets.config import RunConfig
-    class_config = RunConfig(runFolder=runFolder, runconfig=runconfig, nworkers=nworkers, pdb_workers=pdb_workers,
+    class_config = RunConfig(runFolder=runFolder, runconfig=runconfig, max_gpus=max_gpus, nworkers=nworkers, pdb_workers=pdb_workers,
                           loaders_config=config['loaders'], profile=profile)
 
     logger = utils.get_logger('ConfigLoader')
@@ -54,6 +54,7 @@ def parse_args():
                              f"higher than numworkers")
     parser.add_argument("-n", "--numworkers", dest='numworkers', type=int, required=True,
                         help=f"Number of workers")
+    parser.add_argument("--maxgpus", dest='maxgpus', type=int, required=False)
     parser.add_argument("-d", "--device", dest='device', type=str, required=False,
                         help=f"Device")
     parser.add_argument("--debug", dest='debug', default=False, action='store_true')
@@ -74,5 +75,6 @@ def parse_args():
     nworkers = int(args.numworkers)
     pdbworkers = int(args.pdbworkers)
 
-    config, class_config = load_config(runconfig, nworkers, pdbworkers, args.device, args.profile)
+    config, class_config = load_config(runconfigPath=runconfig, nworkers=nworkers, pdb_workers=pdbworkers,
+                                       max_gpus=args.maxgpus, device_str=args.device, profile=args.profile)
     return args, config, class_config

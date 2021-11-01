@@ -133,13 +133,15 @@ class RunConfig:
     profile: bool
     benchmark: bool = default_benchmark
     mixed: bool = default_mixed
+    max_gpus: int = None
 
     def __init__(self, runFolder: Path, runconfig: Mapping,
-                 nworkers: int, pdb_workers: int,
+                 nworkers: int, pdb_workers: int, max_gpus: int,
                  loaders_config: Mapping,
                  profile:bool):
         runconfig = dict(runconfig)
         self.pdb_workers = pdb_workers
+        self.max_gpus = max_gpus
         self.benchmark = runconfig.pop('benchmark', self.benchmark)
         self.mixed = runconfig.pop('mixed', self.mixed)
         self.loaders_config = LoadersConfig(runFolder, runconfig, nworkers, **loaders_config)

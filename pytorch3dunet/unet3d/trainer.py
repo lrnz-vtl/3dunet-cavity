@@ -62,8 +62,15 @@ def build_trainer(config: Mapping, run_config: RunConfig):
     # use DataParallel if more than 1 GPU available
     device = config['device']
     if torch.cuda.device_count() > 1 and not device.type == 'cpu':
-        model = nn.DataParallel(model)
-        logger.info(f'Using {torch.cuda.device_count()} GPUs for training')
+        if run_config.max_gpus is None:
+            gpus_to_use = torch.cuda.device_count()
+        else:
+            gpus_to_use = min(torch.cuda.device_count(), run_config.max_gpus)
+        if gpus_to_use > 1:
+            if gpus_to_use != torch.cuda.device_count():
+                raise NotImplemented
+            model = nn.DataParallel(model)
+            logger.info(f'Using {torch.cuda.device_count()} GPUs for training')
 
     # put the model on GPUs
     logger.info(f"Sending the model to '{config['device']}'")
