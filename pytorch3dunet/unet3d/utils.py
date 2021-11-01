@@ -116,6 +116,9 @@ def set_default_log_level(level):
     global default_level
     default_level = level
 
+    for name,logger in loggers.items():
+        logger.setLevel(level)
+
 def set_filename(fname):
     global filename
     filename = fname

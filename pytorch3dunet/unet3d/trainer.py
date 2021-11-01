@@ -24,7 +24,6 @@ from . import utils
 
 logger = get_logger('UNet3DTrainer')
 
-
 def create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run,
                    dump_inputs, log_criterions, run_config: RunConfig):
     assert 'trainer' in config, 'Could not find trainer configuration'
