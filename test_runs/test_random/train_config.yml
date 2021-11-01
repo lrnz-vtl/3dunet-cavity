@@ -8,8 +8,8 @@ eval_metric:
   name: MeanIoU
   ignore_index: null
 featurizer:
-  - name: PotentialGrid
-  - name: AtomLabel
+  - name: DummyFeature
+  - name: DummyFeature
 transformer:
   - name: Standardize
   - name: RandomFlip

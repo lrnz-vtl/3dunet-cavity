@@ -26,11 +26,14 @@ def default_prediction_collate(batch):
 
 def get_class(class_name, modules):
     for module in modules:
-        m = importlib.import_module(module)
-        clazz = getattr(m, class_name, None)
-        if clazz is not None:
-            return clazz
-    raise RuntimeError(f'Unsupported dataset class: {class_name}')
+        try:
+            m = importlib.import_module(module)
+            clazz = getattr(m, class_name, None)
+            if clazz is not None:
+                return clazz
+        except ImportError:
+            logger.warning(f'Could not import module {module}')
+    raise RuntimeError(f'Unsupported dataset class: {class_name}, or its module could not be imported')
 
 
 def _loader_classes(class_name):

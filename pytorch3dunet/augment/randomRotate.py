@@ -49,6 +49,7 @@ class RandomRotate3D(LocalTransform):
             'KalasantyFeatures': RotateLocalOptions(mode='constant'),
             'PotentialGrid': RotateLocalOptions(mode='nearest'),
             'AtomLabel': RotateLocalOptions(mode='constant'),
+            'DummyFeature': RotateLocalOptions(mode='nearest')
         }[ft.__name__]
 
     @classmethod
