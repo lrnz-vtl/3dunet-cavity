@@ -17,8 +17,7 @@ from pytorch3dunet.augment.utils import Transformer
 from typing import Mapping
 import torch
 from torch.profiler import record_function
-# from torch import autocast
-from torch.cuda.amp import autocast
+from torch import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from . import utils
 
@@ -216,7 +215,7 @@ class UNet3DTrainer:
             if self.dry_run:
                 continue
 
-            with autocast(enabled=self.run_config.mixed):
+            with autocast(device_type='cuda', enabled=self.run_config.mixed):
                 with record_function("3dunet-forward_pass") if self.run_config.profile else nc():
                     output = self.model(input)
                     if self.run_config.mixed:
@@ -295,7 +294,7 @@ class UNet3DTrainer:
                 if self.dry_run:
                     continue
 
-                with autocast(enabled=self.run_config.mixed):
+                with autocast(device_type='cuda', enabled=self.run_config.mixed):
                     output = self.model(input)
                     if self.run_config.mixed:
                         assert output.dtype is torch.float16
