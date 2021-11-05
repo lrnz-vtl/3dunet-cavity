@@ -157,7 +157,7 @@ def create_dataset(arg) -> Optional[PDBDataset]:
                            gridscache=loaders_config.data_config.gridscache)
 
     if exe_config.gridscache is not None:
-        cache_folder = exe_config
+        cache_folder = f'{exe_config.gridscache}/{name}'
         if os.path.exists(f'{cache_folder}/failed'):
             logger.info(f'Previous computation of {name} failed in the cache. Skipping dataset')
             return None
