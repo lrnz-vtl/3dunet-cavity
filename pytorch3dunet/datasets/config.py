@@ -101,7 +101,7 @@ class LoadersConfig:
 
     def __init__(self, runFolder: Path, runconfig: Mapping,
                  nworkers: int,
-                 grid_size: Mapping,
+                 grid_size: int = None,
                  dataset: str = None,
                  batch_size: int = None,
                  fail_on_error: bool = None,
