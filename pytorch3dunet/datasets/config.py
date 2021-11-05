@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pytorch3dunet.unet3d.utils import get_logger, Phase
-from typing import Mapping, Union, List
+from typing import Mapping, Union, List, Optional
 from pathlib import Path
 import itertools
 import pprint
@@ -43,6 +43,7 @@ def default_if_none(x, default):
 
 
 class PdbDataConfig:
+    gridscache = None
     data_paths = Mapping[Phase, List[str]]
     pdb2pqrPath: str = default_pdb2pqrPath
     reuse_grids: bool = False
@@ -51,8 +52,10 @@ class PdbDataConfig:
 
     def __init__(self, dataFolder: str, train: List[str], val: List[str], test: List[str],
                  pdb2pqrPath: str = None, reuse_grids: bool = None, randomize_name: bool = None,
-                 ligand_mask_radius: float = None):
+                 ligand_mask_radius: float = None, gridscache: Optional[str] = None):
         dataFolder = Path(dataFolder)
+
+        self.gridscache = gridscache
 
         self.data_paths = {Phase.TRAIN: [str(dataFolder / name) for name in train],
                            Phase.TEST: [str(dataFolder / name) for name in test],
@@ -68,6 +71,8 @@ class PdbDataConfig:
             right = self.data_paths[rightPhase]
             assert set(left).isdisjoint(right), \
                 f"{leftPhase} and {rightPhase} file paths overlap. Train, val and test sets must be separate"
+
+        assert not ((not self.reuse_grids) and (self.gridscache is not None))
 
     def pretty_format(self):
         out = {k: v for k, v in vars(self).items() if k != 'data_paths'}
@@ -138,7 +143,7 @@ class RunConfig:
     def __init__(self, runFolder: Path, runconfig: Mapping,
                  nworkers: int, pdb_workers: int, max_gpus: int,
                  loaders_config: Mapping,
-                 profile:bool):
+                 profile: bool):
         runconfig = dict(runconfig)
         self.pdb_workers = pdb_workers
         self.max_gpus = max_gpus

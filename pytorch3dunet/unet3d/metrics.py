@@ -1,7 +1,7 @@
 import importlib
 import torch
 from pytorch3dunet.unet3d.losses import compute_per_channel_dice
-from pytorch3dunet.unet3d.utils import get_logger, expand_as_one_hot
+from pytorch3dunet.unet3d.utils import get_logger, get_attr, expand_as_one_hot
 
 logger = get_logger('EvalMetric')
 
@@ -106,28 +106,22 @@ def get_evaluation_metric(config):
     :return: an instance of the evaluation metric
     """
 
-    def _metric_class(class_name):
-        m = importlib.import_module('pytorch3dunet.unet3d.metrics')
-        clazz = getattr(m, class_name)
-        return clazz
+    modules = ['pytorch3dunet.unet3d.metrics', 'pytorch3dunet.unet3d.pdb_metrics']
 
     assert 'eval_metric' in config, 'Could not find evaluation metric configuration'
     metric_config = config['eval_metric']
-    metric_class = _metric_class(metric_config['name'])
+    metric_class = get_attr(metric_config['name'], modules)
     return metric_class(**metric_config)
 
 
 def get_log_metrics(config):
 
-    def _metric_class(class_name):
-        m = importlib.import_module('pytorch3dunet.unet3d.metrics')
-        clazz = getattr(m, class_name)
-        return clazz
+    modules = ['pytorch3dunet.unet3d.metrics', 'pytorch3dunet.unet3d.pdb_metrics']
 
     ret = []
     if 'log_metrics' in config:
         metric_configs = config['log_metrics']
         for metric_config in metric_configs:
-            metric_class = _metric_class(metric_config['name'])
+            metric_class = get_attr(metric_config['name'], modules)
             ret.append(metric_class(**metric_config))
     return ret

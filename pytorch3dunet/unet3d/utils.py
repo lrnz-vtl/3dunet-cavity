@@ -45,6 +45,14 @@ class Phase(Enum):
 
         raise RuntimeError
 
+def get_attr(name, module_names):
+    for module in module_names:
+        m = importlib.import_module(module)
+        if hasattr(m, name):
+            ft_class = getattr(m, name)
+            return ft_class
+    raise AttributeError(f"None of the modules in {module_names} have attribute {name}")
+
 def save_checkpoint(state, is_best, checkpoint_dir, logger=None):
     """Saves model and training parameters at '{checkpoint_dir}/last_checkpoint.pytorch'.
     If is_best==True saves '{checkpoint_dir}/best_checkpoint.pytorch' as well.

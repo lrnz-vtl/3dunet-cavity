@@ -1,8 +1,7 @@
-import importlib
 import numpy as np
 import itertools
 from typing import List, Type
-from pytorch3dunet.unet3d.utils import get_logger
+from pytorch3dunet.unet3d.utils import get_logger, get_attr
 from abc import ABC, abstractmethod
 
 logger = get_logger('Featurizer')
@@ -120,16 +119,15 @@ class ComposedFeatures(BaseFeatureList):
 
 
 def get_feature_cls(name) -> Type[Transformable]:
-    m = importlib.import_module('pytorch3dunet.datasets.featurizer')
-    ft_class = getattr(m, name)
-    return ft_class
+    modules = ['pytorch3dunet.datasets.featurizer']
+    return get_attr(name, modules)
 
 
 def get_features(configs) -> ComposedFeatures:
+    modules = ['pytorch3dunet.datasets.featurizer', 'pytorch3dunet.datasets.features']
 
     def _create_feature(config):
-        m = importlib.import_module('pytorch3dunet.datasets.featurizer')
-        ft_class = getattr(m, config['name'])
+        ft_class = get_attr(config['name'], modules)
         return ft_class(**config)
 
     return ComposedFeatures([_create_feature(config) for config in configs])

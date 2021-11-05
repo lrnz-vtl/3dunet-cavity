@@ -1,16 +1,19 @@
+from __future__ import annotations
 import os
-from pathlib import Path
 from openbabel import openbabel
 import prody as pr
 from pytorch3dunet.unet3d.utils import get_logger
-from pytorch3dunet.datasets.featurizer import BaseFeatureList, PotentialGrid
+from pytorch3dunet.datasets.featurizer import BaseFeatureList
+from pytorch3dunet.datasets.features import PotentialGrid
 from pytorch3dunet.datasets.apbs import ApbsGridCollection, TmpFile
 from scipy.spatial.transform import Rotation
 from multiprocessing import Pool, cpu_count
 import numpy as np
 import importlib
 from openbabel.pybel import readfile, Molecule
-from typing import List, Mapping
+from typing import List, Mapping, Optional, Callable, Any, Collection
+from pytorch3dunet.datasets.config import PdbDataConfig, LoadersConfig, Phase
+from pathlib import Path
 
 miniball_spec = importlib.util.find_spec("miniball")
 if miniball_spec is not None:
@@ -58,11 +61,14 @@ class PdbDataHandler:
                  pdb2pqrPath,
                  cleanup: bool,
                  reuse_grids: bool,
-                 pregrid_transformer_config:List[Mapping] = None):
+                 cache_folder: Optional[str],
+                 pregrid_transformer_config: List[Mapping] = None,
+                 generating_cache: bool = False):
 
         if pregrid_transformer_config is None:
             pregrid_transformer_config = []
 
+        self.cache_folder = cache_folder
         self.src_data_folder = src_data_folder
         self.name = name
         self.tmp_data_folder = tmp_data_folder
@@ -70,12 +76,25 @@ class PdbDataHandler:
         self.cleanup = cleanup
         self.apbsGrids = None
         self.reuse_grids = reuse_grids
+        self.generating_cache = generating_cache
 
-        # Serialise structure to file, needed for pickling
-        self.structure_fname = str(Path(self.tmp_data_folder) / "structure.pdb")
-        self.ligand_fname = str(Path(self.tmp_data_folder) / "ligand.pdb")
+        os.makedirs(self.cache_folder, exist_ok=True)
 
-        if self.reuse_grids and os.path.exists(self.structure_fname) and os.path.exists(self.ligand_fname):
+        # TODO refactor
+
+        if self.cache_folder is None:
+            self.structure_fname = str(Path(self.tmp_data_folder) / "structure.pdb")
+            self.ligand_fname = str(Path(self.tmp_data_folder) / "ligand.pdb")
+        else:
+            self.structure_fname = str(Path(self.cache_folder) / "structure.pdb")
+            self.ligand_fname = str(Path(self.cache_folder) / "ligand.pdb")
+            assert os.path.exists(self.structure_fname) or self.generating_cache
+            assert os.path.exists(self.ligand_fname) or self.generating_cache
+
+        # NOTE Lorenzo
+        if self.cache_folder is not None and not self.generating_cache:
+            pass
+        elif self.reuse_grids and os.path.exists(self.structure_fname) and os.path.exists(self.ligand_fname):
             pass
         else:
             structure, ligand = self._processPdb()
@@ -138,7 +157,7 @@ class PdbDataHandler:
         structure, _ = self.getStructureLigand()
 
         if pred.ndim == 4:
-            assert len(pred)==1
+            assert len(pred) == 1
             pred = pred[0]
         if pred.shape != self.apbsGrids.shape:
             raise ValueError("pred.shape != grid.shape. Are you trying to make a pocket prediction from slices? "
@@ -156,8 +175,7 @@ class PdbDataHandler:
             binz = int((z - min(self.apbsGrids.edges[2])) / self.apbsGrids.delta[2])
 
             if binx >= self.apbsGrids.shape[0] or biny >= self.apbsGrids.shape[1] or binz >= self.apbsGrids.shape[2]:
-                # if not warned:
-                if True:
+                if not warned:
                     logger.warn(f"Ignoring coord {i} for {self.name} because out of bounds")
                     warned = True
                 continue
@@ -175,14 +193,14 @@ class PdbDataHandler:
         else:
             ret = atoms
 
-        if len(ret)==0:
+        if len(ret) == 0:
             return ret
         else:
             with self.tmp_file(f'{self.tmp_data_folder}/tmp_pred.pdb', True) as tmp_pred_path:
                 pr.writePDB(tmp_pred_path, ret)
                 return pr.parsePDB(tmp_pred_path)
 
-    def getRawsLabels(self, features: BaseFeatureList, grid_size:int, ligand_mask_radius:float):
+    def getRawsLabels(self, features: BaseFeatureList, grid_size: int, ligand_mask_radius: float):
 
         structure, ligand = self.getStructureLigand()
         # A different format
@@ -195,10 +213,11 @@ class PdbDataHandler:
         else:
             dielec_const_list_for_labels = dielec_const_list
 
-        with ApbsGridCollection(structure=structure, ligand=ligand, grid_size=grid_size, ligand_mask_radius=ligand_mask_radius,
+        with ApbsGridCollection(structure=structure, ligand=ligand, grid_size=grid_size,
+                                ligand_mask_radius=ligand_mask_radius,
                                 dielec_const_list=dielec_const_list_for_labels, tmp_data_folder=self.tmp_data_folder,
                                 reuse_grids=self.reuse_grids, name=self.name, pdb2pqrPath=self.pdb2pqrPath,
-                                cleanup=self.cleanup) as self.apbsGrids:
+                                cleanup=self.cleanup, cache_folder=self.cache_folder, generating_cache=self.generating_cache) as self.apbsGrids:
 
             raws = features(structure, mol, self.apbsGrids)
             labels = self.apbsGrids.labels
@@ -228,7 +247,7 @@ class PdbDataHandler:
         ligand2.setCoords(coords_ligand)
         return structure2, ligand2
 
-    def tmp_file(self, name, force_removal:bool = False):
+    def tmp_file(self, name, force_removal: bool = False):
         return TmpFile(name, self.cleanup or force_removal)
 
     def _processPdb(self):
@@ -236,22 +255,23 @@ class PdbDataHandler:
             return processPdb(self.src_data_folder, self.name, tmp_ligand_pdb_file)
 
     @classmethod
-    def map_datasets(cls, dataset_config, phase, f):
-        # TODO Refactor
-        phase_config = dataset_config[phase]
+    def map_datasets(cls, loaders_config: LoadersConfig, pdb_workers: int, features_config,
+                     transformer_config, phases:Collection[Phase], f: Callable[[PdbDataHandler], Any],
+                     generating_cache: bool):
 
-        file_paths = phase_config['file_paths']
-        file_paths = cls.traverse_pdb_paths(file_paths)
+        data_paths = loaders_config.data_config.data_paths
+        file_paths = [d for phase in phases for d in data_paths[phase]]
+        file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
-        args = ((file_path, name, dataset_config, phase) for file_path, name in file_paths)
+        args = ((file_path, name, loaders_config, features_config, transformer_config, generating_cache)
+                for file_path, name in file_paths)
 
-        if dataset_config.get('parallel', True):
-            nworkers = min(cpu_count(), max(1, dataset_config.get('num_workers', 1)))
-            logger.info(f'Parallelizing dataset creation among {nworkers} workers')
-            pool = Pool(processes=nworkers)
-            return (f(*x) for x in pool.map(create_dataset, args) if x is not None)
+        if pdb_workers > 0:
+            logger.info(f'Parallelizing dataset creation among {pdb_workers} workers')
+            pool = Pool(processes=pdb_workers)
+            return [f(x) for x in pool.map(create_dataset, args) if x is not None]
         else:
-            return [f(*x) for x in (create_dataset(arg) for arg in args) if x is not None]
+            return [f(x) for x in (create_dataset(arg) for arg in args) if x is not None]
 
     @staticmethod
     def traverse_pdb_paths(file_paths):
@@ -271,31 +291,33 @@ class PdbDataHandler:
 
         return results
 
-def create_dataset(arg):
-    file_path, name, dataset_config, phase = arg
-    phase_config = dataset_config[phase]
 
-    pregrid_transformer_config = phase_config.get('pdb_transformer', [])
-    grid_config = dataset_config.get('grid_config', {})
-    features_config = dataset_config.get('featurizer', [])
+def create_dataset(arg) -> Optional[PdbDataHandler]:
+    file_path, name, loaders_config, feature_config, transformer_config, generating_cache = arg
 
-    exe_config = {k: dataset_config[k] for k in ['tmp_folder', 'pdb2pqrPath', 'cleanup'] if
-                  k in dataset_config.keys()}
+    loaders_config: LoadersConfig = loaders_config
+    fail_on_error = loaders_config.fail_on_error
 
-    tmp_data_folder = str(Path(exe_config['tmp_folder']) / name)
-    os.makedirs(tmp_data_folder, exist_ok=True)
+    pdb_config: PdbDataConfig = loaders_config.data_config
+
+    cache_folder = f'{pdb_config.gridscache}/{name}'
 
     try:
-        logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
-        dataset = PdbDataHandler(src_data_folder=file_path,
-                                 name=name,
-                                 pregrid_transformer_config=pregrid_transformer_config,
-                                 tmp_data_folder=tmp_data_folder,
-                                 pdb2pqrPath=exe_config['pdb2pqrPath'],
-                                 cleanup=exe_config.get('cleanup', False))
-        raws,labels = dataset.getRawsLabels(features_config=features_config, grid_config=grid_config)
-        return raws, labels
+        logger.info(f'Loading set from: {file_path} named {name} ...')
+        return PdbDataHandler(
+            src_data_folder=file_path,
+            name=name,
+            tmp_data_folder=cache_folder,
+            pdb2pqrPath=pdb_config.pdb2pqrPath,
+            cleanup=loaders_config.cleanup,
+            reuse_grids=pdb_config.reuse_grids,
+            cache_folder=cache_folder,
+            pregrid_transformer_config=None,
+            generating_cache=generating_cache)
 
-    except Exception:
-        logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
+    except Exception as e:
+        if fail_on_error:
+            raise e
+        logger.error(f'Generation of grids from {name} failed. Recording failure and continuing', exc_info=True)
+        Path(f'{cache_folder}/failed').touch()
         return None

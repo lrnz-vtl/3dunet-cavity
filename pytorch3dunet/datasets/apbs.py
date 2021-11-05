@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Mapping
+from typing import List, Mapping, Optional, Callable, Any
 from pytorch3dunet.unet3d.utils import get_logger
 from potsim2 import PotGrid
 import prody as pr
@@ -54,7 +54,8 @@ class TmpFile:
 class ApbsGridCollection:
 
     def __init__(self, structure, ligand, grid_size:int, ligand_mask_radius:float, dielec_const_list,
-                 tmp_data_folder: str, reuse_grids: bool, name: str, pdb2pqrPath: str, cleanup: bool):
+                 tmp_data_folder: str, reuse_grids: bool, name: str, pdb2pqrPath: str, cleanup: bool,
+                 cache_folder: Optional[str], generating_cache:bool = False):
         """
         pot_grids: Mapping dielectric constant -> PotGrid
         """
@@ -63,6 +64,8 @@ class ApbsGridCollection:
         self.name = name
         self.pdb2pqrPath = pdb2pqrPath
         self.cleanup = cleanup
+        self.cache_folder = cache_folder
+        self.generating_cache = generating_cache
 
         radius = ligand_mask_radius
         self.grid_size = grid_size
@@ -102,67 +105,86 @@ class ApbsGridCollection:
     def tmp_file(self, name:str):
         return TmpFile(name, self.cleanup)
 
+    def generate_or_fromcache(self, name:str, gen_fun: Callable[[Any], None]):
+        if self.cache_folder is not None:
+            filename = f'{self.cache_folder}/{name}'
+            if not self.generating_cache:
+                assert os.path.exists(filename)
+        else:
+            filename = f'{self.tmp_data_folder}/{name}'
+
+        class Context:
+            def __init__(this):
+                this.inner = None
+
+            def __enter__(this):
+                if self.cache_folder is None:
+                    this.inner = self.tmp_file(filename)
+                    fname = this.inner.__enter__()
+                else:
+                    fname = filename
+                if not self.reuse_grids or not os.path.exists(filename):
+                    gen_fun(fname)
+                return fname
+
+            def __exit__(this, exc_type, exc_val, exc_tb):
+                if this.inner is not None:
+                    this.inner.__exit__(exc_type, exc_val, exc_tb)
+        return Context()
+
     def _runApbs(self, dst_pdb_file: str, grid_size: int, dielec_const_list: List[float]) -> Mapping[float, PotGrid]:
 
-        with self.tmp_file(f"{self.tmp_data_folder}/protein.pqr") as pqr_output:
+        def generate(pqr_output):
+            logger.debug(f'Running pdb2pqr on {self.name}')
+            proc = subprocess.Popen(
+                [
+                    self.pdb2pqrPath,
+                    "--with-ph=7.4",
+                    "--ff=PARSE",
+                    "--chain",
+                    dst_pdb_file,
+                    pqr_output
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            cmd_out = proc.communicate()
+            if proc.returncode != 0:
+                raise Exception(cmd_out[1].decode())
 
-            if self.reuse_grids and os.path.exists(pqr_output):
-                pass
-            else:
-                logger.debug(f'Running pdb2pqr on {self.name}')
-
-                proc = subprocess.Popen(
-                    [
-                        self.pdb2pqrPath,
-                        "--with-ph=7.4",
-                        "--ff=PARSE",
-                        "--chain",
-                        dst_pdb_file,
-                        pqr_output
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-                cmd_out = proc.communicate()
-                if proc.returncode != 0:
-                    raise Exception(cmd_out[1].decode())
-
-            grids = {dielec_const: self._runApbsSingle(pqr_output, dst_pdb_file, grid_size, dielec_const) for dielec_const
-                     in dielec_const_list}
+        with self.generate_or_fromcache('protein.pqr', generate) as pqr_output:
+            grids = {dielec_const: self._runApbsSingle(pqr_output, dst_pdb_file, grid_size, dielec_const) for dielec_const in dielec_const_list}
 
         return grids
 
     def _runApbsSingle(self, pqr_output, dst_pdb_file, grid_size, dielec_const) -> PotGrid:
 
-        with self.tmp_file(f"{self.tmp_data_folder}/grid_{dielec_const}.dx.gz") as grid_fname:
 
-            if self.reuse_grids and os.path.exists(grid_fname):
-                pass
+        def generate(grid_fname):
+            logger.debug(f'Running apbs on {self.name} with dielec_const = {dielec_const}')
 
-            else:
-                logger.debug(f'Running apbs on {self.name} with dielec_const = {dielec_const}')
+            owd = os.getcwd()
+            os.chdir(self.tmp_data_folder)
 
-                owd = os.getcwd()
-                os.chdir(self.tmp_data_folder)
+            with self.tmp_file("apbs-in") as apbs_in_fname:
+                grid_fname_in = '.'.join(str(Path(grid_fname).name).split('.')[:-2])
+                input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=grid_fname_in,
+                                  grid_size=grid_size, dielec_const=dielec_const)
 
-                with self.tmp_file("apbs-in") as apbs_in_fname:
-                    grid_fname_in = '.'.join(str(Path(grid_fname).name).split('.')[:-2])
-                    input = apbsInput(pqr_fname=str(Path(pqr_output).name), grid_fname=grid_fname_in,
-                                      grid_size=grid_size, dielec_const=dielec_const)
+                with open(apbs_in_fname, "w") as f:
+                    f.write(input)
 
-                    with open(apbs_in_fname, "w") as f:
-                        f.write(input)
+                # generates dx.gz grid file
+                proc = subprocess.Popen(
+                    ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                cmd_out = proc.communicate()
+                if proc.returncode != 0:
+                    raise Exception(cmd_out[1].decode())
 
-                    # generates dx.gz grid file
-                    proc = subprocess.Popen(
-                        ["apbs", apbs_in_fname], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
-                    cmd_out = proc.communicate()
-                    if proc.returncode != 0:
-                        raise Exception(cmd_out[1].decode())
+            os.chdir(owd)
 
-                os.chdir(owd)
-
+        with self.generate_or_fromcache(f"grid_{dielec_const}.dx.gz", generate) as grid_fname:
             grid = PotGrid(dst_pdb_file, grid_fname)
 
         return grid

@@ -9,7 +9,8 @@ from pytorch3dunet.unet3d.utils import set_default_log_level, set_filename
 
 checkpointname = "checkpoint"
 
-def load_config(runconfigPath, nworkers:int, pdb_workers:int, max_gpus:int, device_str:str, profile: bool):
+
+def load_config(runconfigPath, nworkers: int, pdb_workers: int, max_gpus: int, device_str: str, profile: bool):
     runconfig = yaml.safe_load(open(runconfigPath, 'r'))
     runFolder = Path(runconfig.get('runFolder', Path(runconfigPath).parent))
     train_config = runFolder / 'train_config.yml'
@@ -17,8 +18,9 @@ def load_config(runconfigPath, nworkers:int, pdb_workers:int, max_gpus:int, devi
     config = yaml.safe_load(open(train_config, 'r'))
 
     from pytorch3dunet.datasets.config import RunConfig
-    class_config = RunConfig(runFolder=runFolder, runconfig=runconfig, max_gpus=max_gpus, nworkers=nworkers, pdb_workers=pdb_workers,
-                          loaders_config=config['loaders'], profile=profile)
+    class_config = RunConfig(runFolder=runFolder, runconfig=runconfig, max_gpus=max_gpus, nworkers=nworkers,
+                             pdb_workers=pdb_workers,
+                             loaders_config=config['loaders'], profile=profile)
 
     logger = utils.get_logger('ConfigLoader')
     logger.info(f'Read config:\n{class_config.pretty_format()}')
@@ -29,7 +31,6 @@ def load_config(runconfigPath, nworkers:int, pdb_workers:int, max_gpus:int, devi
     os.makedirs(class_config.loaders_config.tmp_folder, exist_ok=True)
 
     config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)
-
 
     if device_str is not None:
         logger.info(f"Device specified in config: '{device_str}'")
@@ -44,8 +45,8 @@ def load_config(runconfigPath, nworkers:int, pdb_workers:int, max_gpus:int, devi
     config['device'] = device
     return config, class_config
 
-def parse_args():
 
+def parse_args():
     parser = ArgumentParser()
     parser.add_argument("-r", "--runconfig", dest='runconfig', type=str, required=True,
                         help=f"The run config yaml file")

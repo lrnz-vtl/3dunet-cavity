@@ -11,25 +11,28 @@ import uuid
 from torch.utils.data._utils.collate import default_collate
 from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures
 from typing import Iterable, Optional
-from dataclasses import  dataclass
+from dataclasses import dataclass
 
 logger = get_logger('PdbDataset')
 lock = Lock()
 
+
 @dataclass
 class ExeConfig:
-    tmp_folder : str
+    tmp_folder: str
     pdb2pqrPath: str
+    gridscache: str
     cleanup: bool
-    reuse_grids : bool
+    reuse_grids: bool
     randomize_name: bool
+
 
 class PDBDataset(AbstractDataset):
 
-    def __init__(self, src_data_folder, name, exe_config : ExeConfig,
-                 phase:str,
+    def __init__(self, src_data_folder, name, exe_config: ExeConfig,
+                 phase: str,
                  grid_size: int,
-                 ligand_mask_radius:float,
+                 ligand_mask_radius: float,
                  features: ComposedFeatures,
                  transformer_config,
                  force_rotations=False):
@@ -41,7 +44,10 @@ class PDBDataset(AbstractDataset):
 
         phase = Phase.from_str(phase)
 
+        cache_folder = None
+
         if randomize_name:
+            assert ExeConfig.gridscache is None
             uuids = None
             if reuse_grids:
                 try:
@@ -56,6 +62,8 @@ class PDBDataset(AbstractDataset):
 
         else:
             tmp_data_folder = str(Path(exe_config.tmp_folder) / f"{name}")
+            if exe_config.gridscache is not None:
+                cache_folder = f"{exe_config.gridscache}/{name}"
 
         os.makedirs(tmp_data_folder, exist_ok=True)
         logger.debug(f'tmp_data_folder: {tmp_data_folder}')
@@ -66,9 +74,11 @@ class PDBDataset(AbstractDataset):
                                                  pdb2pqrPath=exe_config.pdb2pqrPath,
                                                  cleanup=exe_config.cleanup,
                                                  reuse_grids=reuse_grids,
+                                                 cache_folder=cache_folder
                                                  )
 
-            raws, labels = self.pdbDataHandler.getRawsLabels(features=features, grid_size=grid_size, ligand_mask_radius=ligand_mask_radius)
+            raws, labels = self.pdbDataHandler.getRawsLabels(features=features, grid_size=grid_size,
+                                                             ligand_mask_radius=ligand_mask_radius)
             allowRotations = self.pdbDataHandler.checkRotations()
             if force_rotations:
                 allowRotations = True
@@ -104,10 +114,10 @@ class PDBDataset(AbstractDataset):
 
     @classmethod
     def prediction_collate(cls, batch):
-        names = [name for name,_,_ in batch]
+        names = [name for name, _, _ in batch]
         pdbObjs = [x for _, x, _ in batch]
         assert all(y == names[0] for y in names)
-        samples = [data for _,_,data in batch]
+        samples = [data for _, _, data in batch]
         return default_prediction_collate(samples)
 
     @classmethod
@@ -117,7 +127,8 @@ class PDBDataset(AbstractDataset):
         file_paths = data_paths[Phase.from_str(phase)]
         file_paths = PdbDataHandler.traverse_pdb_paths(file_paths)
 
-        args = ((file_path, name, loaders_config, phase, features_config, transformer_config) for file_path, name in file_paths)
+        args = ((file_path, name, loaders_config, phase, features_config, transformer_config) for file_path, name in
+                file_paths)
 
         if pdb_workers > 0:
             logger.info(f'Parallelizing dataset creation among {pdb_workers} workers')
@@ -127,8 +138,6 @@ class PDBDataset(AbstractDataset):
             return [x for x in (create_dataset(arg) for arg in args) if x is not None]
 
 
-
-
 def create_dataset(arg) -> Optional[PDBDataset]:
     file_path, name, loaders_config, phase, feature_config, transformer_config = arg
     fail_on_error = loaders_config.fail_on_error
@@ -136,7 +145,7 @@ def create_dataset(arg) -> Optional[PDBDataset]:
 
     features: ComposedFeatures = get_features(feature_config)
 
-    pdb_config : PdbDataConfig = loaders_config.data_config
+    pdb_config: PdbDataConfig = loaders_config.data_config
 
     grid_size = loaders_config.grid_size
 
@@ -144,7 +153,14 @@ def create_dataset(arg) -> Optional[PDBDataset]:
                            pdb2pqrPath=pdb_config.pdb2pqrPath,
                            cleanup=loaders_config.cleanup,
                            reuse_grids=pdb_config.reuse_grids,
-                           randomize_name=pdb_config.randomize_name)
+                           randomize_name=pdb_config.randomize_name,
+                           gridscache=loaders_config.data_config.gridscache)
+
+    if exe_config.gridscache is not None:
+        cache_folder = exe_config
+        if os.path.exists(f'{cache_folder}/failed'):
+            logger.info(f'Previous computation of {name} failed in the cache. Skipping dataset')
+            return None
 
     try:
         logger.info(f'Loading {phase} set from: {file_path} named {name} ...')
@@ -163,5 +179,3 @@ def create_dataset(arg) -> Optional[PDBDataset]:
             raise e
         logger.error(f'Skipping {phase} set from: {file_path} named {name}.', exc_info=True)
         return None
-
-
