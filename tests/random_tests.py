@@ -1,11 +1,13 @@
 import unittest
 
-from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures, LabelClass, PotentialGrid
+from pytorch3dunet.datasets.featurizer import get_features, ComposedFeatures, LabelClass
+from pytorch3dunet.datasets.features import PotentialGrid
 from pytorch3dunet.augment.transforms import Phase
 import numpy as np
 from typing import Mapping, Iterable, Callable
-from pytorch3dunet.augment.utils import Transformer
+from pytorch3dunet.augment.utils import Transformer, take_while_deterministic
 import torch
+
 
 class TestRandom(unittest.TestCase):
     '''

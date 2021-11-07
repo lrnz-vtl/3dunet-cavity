@@ -3,7 +3,7 @@ from pathlib import Path
 from multiprocessing import Lock
 import h5py
 import numpy as np
-from pytorch3dunet.augment.utils import Transformer
+from pytorch3dunet.augment.utils import Transformer, take_while_deterministic
 from pytorch3dunet.augment.transforms import Transform
 from pytorch3dunet.augment.standardize import Stats
 from pytorch3dunet.unet3d.utils import get_logger, Phase
@@ -20,8 +20,7 @@ lock = Lock()
 
 class AbstractDataset(Dataset, ABC):
     """
-    Implementation of torch.utils.data.Dataset backed by the HDF5 files, which iterates over the raw and label datasets
-    patch by patch with a given stride.
+    Implementation of torch.utils.data.Dataset backed by the HDF5 files.
     """
 
     @classmethod
@@ -53,17 +52,26 @@ class AbstractDataset(Dataset, ABC):
         labels = np.expand_dims(labels, axis=0)
 
         self.phase = phase
-
         self.stats = Stats(raws)
 
-        self.transformer = Transformer(transformer_config=transformer_config, common_config={},
+        det_transformer_config, rand_transformer_config = take_while_deterministic(transformer_config)
+
+        logger.debug(f'Deterministic transform config: \n{det_transformer_config}')
+        logger.debug(f'Random transform config: \n{rand_transformer_config}')
+
+        # Apply all deterministic transformations before any random transformations only once at the start
+        det_transformer = Transformer(transformer_config=det_transformer_config, common_config={},
+                                       allowRotations=allowRotations, debug_str=debug_str, stats=self.stats)
+        raws = det_transformer.create_transform(phase=self.phase, debug_str='_det_raw')(raws, self.featureTypes)
+        labels = det_transformer.create_transform(phase=self.phase, debug_str='_det_label')(labels, [LabelClass])
+
+        self.transformer = Transformer(transformer_config=rand_transformer_config, common_config={},
                                        allowRotations=allowRotations, debug_str=debug_str, stats=self.stats)
         self.raw_transform = self.transformer.create_transform(self.phase, '_raw')
 
         if phase != Phase.TEST:
             # create label/weight transform only in train/val phase
             self.label_transform = self.transformer.create_transform(self.phase, '_label')
-
             self._check_dimensionality(raws, labels)
         else:
             # 'test' phase used only for predictions so ignore the label dataset

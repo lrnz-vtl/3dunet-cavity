@@ -119,7 +119,7 @@ class ComposedFeatures(BaseFeatureList):
 
 
 def get_feature_cls(name) -> Type[Transformable]:
-    modules = ['pytorch3dunet.datasets.featurizer']
+    modules = ['pytorch3dunet.datasets.featurizer', 'pytorch3dunet.datasets.features']
     return get_attr(name, modules)
 
 

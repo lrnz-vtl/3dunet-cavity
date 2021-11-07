@@ -24,8 +24,7 @@ from . import utils
 
 logger = get_logger('UNet3DTrainer')
 
-def create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run,
-                   dump_inputs, log_criterions, run_config: RunConfig):
+def create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, log_criterions, run_config: RunConfig):
     assert 'trainer' in config, 'Could not find trainer configuration'
     trainer_config = config['trainer']
 
@@ -45,8 +44,6 @@ def create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_
                          loaders=loaders,
                          tensorboard_formatter=tensorboard_formatter,
                          sample_plotter=sample_plotter,
-                         dry_run=dry_run,
-                         dump_inputs=dump_inputs,
                          run_config=run_config,
                          **trainer_config)
 
@@ -100,7 +97,7 @@ def build_trainer(config: Mapping, run_config: RunConfig):
     trainer = create_trainer(config, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler,
                              loss_criterion=loss_criterion, eval_criterion=eval_criterion,
                              log_criterions=log_criterions,
-                             loaders=loaders, dry_run=config['dry_run'], dump_inputs=config['dump_inputs'],
+                             loaders=loaders,
                              run_config=run_config)
 
     return trainer
@@ -117,9 +114,7 @@ class UNet3DTrainer:
                  validate_iters=None, num_iterations=1, num_epoch=0,
                  eval_score_higher_is_better=True, best_eval_score=None,
                  tensorboard_formatter=None, sample_plotter=None,
-                 skip_train_validation=False,
-                 dry_run=False,
-                 dump_inputs=False):
+                 skip_train_validation=False):
 
         self.run_config = run_config
         self.model = model
@@ -142,8 +137,6 @@ class UNet3DTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
-        self.dry_run = dry_run
-        self.dump_inputs = dump_inputs
 
         self.valLoaders = self.loaders['val']()
 
@@ -210,10 +203,10 @@ class UNet3DTrainer:
                 names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
             logger.debug(f'Forward samples {names}')
 
-            if self.dump_inputs:
+            if self.run_config.dump_inputs:
                 self.save_inputs(names, input, target)
 
-            if self.dry_run:
+            if self.run_config.dry_run:
                 continue
 
             with autocast(enabled=self.run_config.mixed):

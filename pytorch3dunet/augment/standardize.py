@@ -42,6 +42,10 @@ class Standardize(LocalTransform):
     """
 
     @classmethod
+    def is_random(cls) -> bool:
+        return False
+
+    @classmethod
     def is_rotation(cls):
         return False
 

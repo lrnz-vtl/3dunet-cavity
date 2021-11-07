@@ -26,6 +26,10 @@ class RandomFlip(BaseTransform):
     """
 
     @classmethod
+    def is_random(cls) -> bool:
+        return True
+
+    @classmethod
     def is_rotation(cls):
         return False
 

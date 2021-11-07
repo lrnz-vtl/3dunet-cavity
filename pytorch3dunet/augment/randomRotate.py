@@ -35,6 +35,10 @@ class RotateLocalOptions(TransformOptions):
 class RandomRotate3D(LocalTransform):
 
     @classmethod
+    def is_random(cls) -> bool:
+        return True
+
+    @classmethod
     def local_option_type(cls) -> Type[TransformOptions]:
         return RotateLocalOptions
 

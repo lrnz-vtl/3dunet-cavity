@@ -139,6 +139,8 @@ class RunConfig:
     benchmark: bool = default_benchmark
     mixed: bool = default_mixed
     max_gpus: int = None
+    dry_run: bool = False
+    dump_inputs: bool = False
 
     def __init__(self, runFolder: Path, runconfig: Mapping,
                  nworkers: int, pdb_workers: int, max_gpus: int,
@@ -149,6 +151,8 @@ class RunConfig:
         self.max_gpus = max_gpus
         self.benchmark = runconfig.pop('benchmark', self.benchmark)
         self.mixed = runconfig.pop('mixed', self.mixed)
+        self.dry_run = runconfig.pop('dry_run', self.dry_run)
+        self.dump_inputs = runconfig.pop('dump_inputs', self.dump_inputs)
         self.loaders_config = LoadersConfig(runFolder, runconfig, nworkers, **loaders_config)
         self.profile = profile
 

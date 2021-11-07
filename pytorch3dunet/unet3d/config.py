@@ -25,9 +25,6 @@ def load_config(runconfigPath, nworkers: int, pdb_workers: int, max_gpus: int, d
     logger = utils.get_logger('ConfigLoader')
     logger.info(f'Read config:\n{class_config.pretty_format()}')
 
-    config['dry_run'] = runconfig.get('dry_run', False)
-    config['dump_inputs'] = runconfig.get('dump_inputs', False)
-
     os.makedirs(class_config.loaders_config.tmp_folder, exist_ok=True)
 
     config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)

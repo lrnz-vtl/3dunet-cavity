@@ -32,16 +32,21 @@ class SkippableTransformOptions(ABC):
     def skipped() -> bool:
         pass
 
+
 @dataclass(frozen=True)
 class TransformOptions(SkippableTransformOptions, ABC):
     skipped = False
+
     def serialize(self):
         return dataclasses.asdict(self)
 
+
 class SkippedTransform(SkippableTransformOptions):
     skipped = True
+
     def serialize(self):
         return 'Skipped'
+
 
 class Transform(ABC):
 
@@ -49,7 +54,14 @@ class Transform(ABC):
     def __call__(self, m: np.ndarray, featureTypes: Iterable[Type[Transformable]]) -> np.ndarray:
         pass
 
+
 class BaseTransform(Transform, ABC):
+
+    @classmethod
+    @abstractmethod
+    def is_random(cls) -> bool:
+        pass
+
     @classmethod
     @abstractmethod
     def is_rotation(cls) -> bool:
@@ -70,7 +82,7 @@ class BaseTransform(Transform, ABC):
         pass
 
     @classmethod
-    def read_global_options(cls, global_options_conf: Mapping[str, Any], phase:Phase) -> SkippableTransformOptions:
+    def read_global_options(cls, global_options_conf: Mapping[str, Any], phase: Phase) -> SkippableTransformOptions:
         keys = [x.lower() for x in global_options_conf.keys()]
         assert all([x in ['train', 'test', 'val'] for x in keys])
 
@@ -100,11 +112,11 @@ class BaseTransform(Transform, ABC):
     def validate_options(cls, options_conf: Mapping[str, Mapping[str, Any]]):
         return cls.validate_global_options(options_conf)
 
-    def set_seed(self, seed:int) -> None:
+    def set_seed(self, seed: int) -> None:
         self.generator.manual_seed(seed)
 
-    def __init__(self, options_conf: Mapping[str, Any], phase: Phase, generator:MyGenerator, **kwargs):
-        self.global_options = self.read_global_options(options_conf,phase)
+    def __init__(self, options_conf: Mapping[str, Any], phase: Phase, generator: MyGenerator, **kwargs):
+        self.global_options = self.read_global_options(options_conf, phase)
         self.generator = generator
 
     @profile
@@ -120,7 +132,6 @@ class BaseTransform(Transform, ABC):
 
         assert m.shape == ret.shape
         return ret
-
 
 
 def all_subclasses(cls):
@@ -145,25 +156,27 @@ class LocalTransform(BaseTransform, ABC):
         Callable[[np.ndarray, TransformOptions, int], np.ndarray]]:
         pass
 
-    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase, generator:MyGenerator):
+    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase, generator: MyGenerator):
 
-        assert all(x in ['local','global'] for x in options_conf.keys())
+        assert all(x in ['local', 'global'] for x in options_conf.keys())
         local_options_conf = options_conf.get('local', {})
         global_options_conf = options_conf.get('global', {})
 
         local_options = self.read_local_options(local_options_conf, phase)
+
         def get_local_options(t: Type[Transformable]):
             return local_options.get(t, self.default_local_options(phase, t))
+
         self.get_local_options = get_local_options
 
         super().__init__(global_options_conf, phase, generator)
 
     @classmethod
-    def read_local_options(cls, local_options_conf: Mapping[str, Mapping[str,Any]], phase: Phase) \
-            -> Mapping[Type[Transformable],SkippableTransformOptions]:
+    def read_local_options(cls, local_options_conf: Mapping[str, Mapping[str, Any]], phase: Phase) \
+            -> Mapping[Type[Transformable], SkippableTransformOptions]:
 
         keys = [x.lower() for x in local_options_conf.keys()]
-        assert all([x in ['train','test','val'] for x in keys])
+        assert all([x in ['train', 'test', 'val'] for x in keys])
 
         ret = {}
         key = repr(phase).lower()
@@ -181,8 +194,9 @@ class LocalTransform(BaseTransform, ABC):
         return ret
 
     @classmethod
-    def validate_local_options(cls, local_options_conf: Mapping[str, Mapping[str,Any]]) -> Mapping[str, Mapping[str,Any]]:
-        assert all(key.lower() in ['train','val','test'] for key in local_options_conf.keys())
+    def validate_local_options(cls, local_options_conf: Mapping[str, Mapping[str, Any]]) -> Mapping[
+        str, Mapping[str, Any]]:
+        assert all(key.lower() in ['train', 'val', 'test'] for key in local_options_conf.keys())
 
         allOptions = {}
         for phase in Phase:
@@ -197,12 +211,14 @@ class LocalTransform(BaseTransform, ABC):
                     if featureName == 'ComposedFeatures':
                         continue
                     assert featureName not in allOptions[repr(phase)]
-                    allOptions[repr(phase)][featureName] = local_options.get(featureType, cls.default_local_options(phase, featureType)).serialize()
+                    allOptions[repr(phase)][featureName] = local_options.get(featureType,
+                                                                             cls.default_local_options(phase,
+                                                                                                       featureType)).serialize()
 
         return allOptions
 
     @classmethod
-    def validate_options(cls,options_conf: Mapping[str, Mapping[str, Any]]):
+    def validate_options(cls, options_conf: Mapping[str, Mapping[str, Any]]):
         assert all(x in ['local', 'global'] for x in options_conf.keys())
         local_options_conf = options_conf.get('local', {})
         global_options_conf = options_conf.get('global', {})
@@ -230,8 +246,8 @@ class LocalTransform(BaseTransform, ABC):
 
 
 class ComposedTransform(Transform, ABC):
-    def __init__(self, transformer_classes:Iterable[Type[BaseTransform]], conf_options:Iterable[Mapping[str,Any]],
-                 common_config:Mapping[str,Any], phase:Phase, seed:int, dtype=np.float32, convert_to_torch=True):
+    def __init__(self, transformer_classes: Iterable[Type[BaseTransform]], conf_options: Iterable[Mapping[str, Any]],
+                 common_config: Mapping[str, Any], phase: Phase, seed: int, dtype=np.float32, convert_to_torch=True):
 
         self.dtype = dtype
         self.convert_to_torch = convert_to_torch
@@ -239,8 +255,8 @@ class ComposedTransform(Transform, ABC):
 
         args = []
 
-        for i,(cls, options_conf) in enumerate(zip(transformer_classes,conf_options)):
-            iseed = seed+i
+        for i, (cls, options_conf) in enumerate(zip(transformer_classes, conf_options)):
+            iseed = seed + i
             config = {**common_config,
                       **{'generator': MyGenerator().manual_seed(iseed)}
                       }
@@ -264,8 +280,8 @@ class ComposedTransform(Transform, ABC):
             self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
 
     # FIXME Should also update the state
-    def set_seeds(self, seed:int) -> None:
-        for i,t in enumerate(self.transforms):
+    def set_seeds(self, seed: int) -> None:
+        for i, t in enumerate(self.transforms):
             t.set_seed(seed + i)
 
     @profile

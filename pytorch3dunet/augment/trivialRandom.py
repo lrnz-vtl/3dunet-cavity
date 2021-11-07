@@ -26,6 +26,10 @@ class LocalOptions(TransformOptions):
 class TrivialTransform(LocalTransform):
 
     @classmethod
+    def is_random(cls) -> bool:
+        return False
+
+    @classmethod
     def local_option_type(cls) -> Type[TransformOptions]:
         return LocalOptions
 
@@ -35,12 +39,7 @@ class TrivialTransform(LocalTransform):
 
     @classmethod
     def default_local_options(cls, phase: Phase, ft: Type[Transformable]) -> SkippableTransformOptions:
-        return {
-            'LabelClass': LocalOptions(),
-            'KalasantyFeatures': LocalOptions(),
-            'PotentialGrid': LocalOptions(),
-            'AtomLabel': LocalOptions(),
-        }[ft.__name__]
+        return LocalOptions()
 
     @classmethod
     def default_global_options(cls, phase: Phase) -> SkippableTransformOptions:

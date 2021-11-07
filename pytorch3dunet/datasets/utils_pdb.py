@@ -78,7 +78,8 @@ class PdbDataHandler:
         self.reuse_grids = reuse_grids
         self.generating_cache = generating_cache
 
-        os.makedirs(self.cache_folder, exist_ok=True)
+        if self.cache_folder is not None:
+            os.makedirs(self.cache_folder, exist_ok=True)
 
         # TODO refactor
 
