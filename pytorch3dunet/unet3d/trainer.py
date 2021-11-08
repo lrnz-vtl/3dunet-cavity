@@ -285,7 +285,7 @@ class UNet3DTrainer:
 
                 names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
 
-                if self.dry_run:
+                if self.run_config.dry_run:
                     continue
 
                 with autocast(enabled=self.run_config.mixed):
