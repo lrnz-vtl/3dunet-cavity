@@ -1,0 +1,6 @@
+benchmark: false
+random: true
+mixed: true
+train: 30
+val: 3
+test: 3
