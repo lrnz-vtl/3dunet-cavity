@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 import torch
 from torch import optim
+from enum import Enum
 
 
 import builtins
@@ -17,6 +18,40 @@ except AttributeError:
     # No line profiler, provide a pass-through version
     def profile(func): return func
 
+
+class Phase(Enum):
+    TRAIN = 1
+    VAL = 2
+    TEST = 3
+
+    @classmethod
+    def from_str(cls, x:str):
+        y = x.lower()
+        if y=='train':
+            return cls.TRAIN
+        if y=='test':
+            return cls.TEST
+        if y=='val':
+            return cls.VAL
+        raise ValueError(x)
+
+    def __repr__(self):
+        if self==self.TRAIN:
+            return 'train'
+        if self==self.TEST:
+            return 'test'
+        if self==self.VAL:
+            return 'val'
+
+        raise RuntimeError
+
+def get_attr(name, module_names):
+    for module in module_names:
+        m = importlib.import_module(module)
+        if hasattr(m, name):
+            ft_class = getattr(m, name)
+            return ft_class
+    raise AttributeError(f"None of the modules in {module_names} have attribute {name}")
 
 def save_checkpoint(state, is_best, checkpoint_dir, logger=None):
     """Saves model and training parameters at '{checkpoint_dir}/last_checkpoint.pytorch'.
@@ -83,10 +118,20 @@ def save_network_output(output_path, output, logger=None):
 
 loggers = {}
 default_level = logging.INFO
+filename = None
 
 def set_default_log_level(level):
     global default_level
     default_level = level
+
+    for name,logger in loggers.items():
+        logger.setLevel(level)
+
+def set_filename(fname):
+    global filename
+    filename = fname
+    if os.path.exists(filename):
+        os.remove(filename)
 
 def get_logger(name, level=None):
     global loggers
@@ -101,11 +146,17 @@ def get_logger(name, level=None):
         logger = logging.getLogger(name)
         logger.setLevel(level)
         # Logging to console
-        stream_handler = logging.StreamHandler(sys.stdout)
+
         formatter = logging.Formatter(
             '%(asctime)s [%(threadName)s] %(levelname)s %(name)s - %(message)s')
+
+        stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
+        if filename is not None:
+            stream_handler = logging.FileHandler(filename)
+            stream_handler.setFormatter(formatter)
+            logger.addHandler(stream_handler)
 
         loggers[name] = logger
 
@@ -131,6 +182,26 @@ class RunningAverage:
         self.sum += value * n
         self.avg = self.sum / self.count
 
+    def value(self):
+        return self.avg
+
+
+class GpuRunningAverage:
+
+    def __init__(self):
+        self.count = 0
+        self.sum = None
+
+    def update(self, value, n=1):
+        self.count += n
+        if self.sum is None:
+            self.sum = value * n
+        else:
+            self.sum += value * n
+
+    def value(self):
+        return self.sum.item() / self.count
+
 
 def find_maximum_patch_size(model, device):
     """Tries to find the biggest patch size that can be send to GPU for inference
@@ -153,43 +224,6 @@ def find_maximum_patch_size(model, device):
 
         logger.info(f"Current patch size: {shape}")
         model(patch)
-
-
-def remove_halo(patch, index, shape, patch_halo):
-    """
-    Remove `pad_width` voxels around the edges of a given patch.
-    """
-    assert len(patch_halo) == 3
-
-    def _new_slices(slicing, max_size, pad):
-        if slicing.start == 0:
-            p_start = 0
-            i_start = 0
-        else:
-            p_start = pad
-            i_start = slicing.start + pad
-
-        if slicing.stop == max_size:
-            p_stop = None
-            i_stop = max_size
-        else:
-            p_stop = -pad if pad != 0 else 1
-            i_stop = slicing.stop - pad
-
-        return slice(p_start, p_stop), slice(i_start, i_stop)
-
-    D, H, W = shape
-
-    i_c, i_z, i_y, i_x = index
-    p_c = slice(0, patch.shape[0])
-
-    p_z, i_z = _new_slices(i_z, D, patch_halo[0])
-    p_y, i_y = _new_slices(i_y, H, patch_halo[1])
-    p_x, i_x = _new_slices(i_x, W, patch_halo[2])
-
-    patch_index = (p_c, p_z, p_y, p_x)
-    index = (i_c, i_z, i_y, i_x)
-    return patch[patch_index], index
 
 
 def number_of_features_per_level(init_channel_number, num_levels):

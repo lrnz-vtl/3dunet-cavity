@@ -6,6 +6,7 @@ import torch
 from pytorch3dunet.unet3d.buildingblocks import DoubleConv, ExtResNetBlock, create_encoders, \
     create_decoders
 from pytorch3dunet.unet3d.utils import number_of_features_per_level
+from pytorch3dunet.datasets.featurizer import BaseFeatureList
 
 
 class Abstract3DUNet(nn.Module):
@@ -176,7 +177,7 @@ class ResidualUNet3D(Abstract3DUNet):
                                              **kwargs)
 
 
-def get_model(model_config):
+def get_model(features: BaseFeatureList, model_config):
     def _model_class(class_name):
         modules = ['pytorch3dunet.unet3d.model']
         for module in modules:
@@ -186,4 +187,5 @@ def get_model(model_config):
                 return clazz
 
     model_class = _model_class(model_config['name'])
-    return model_class(**model_config)
+    in_channels = features.num_features
+    return model_class(in_channels=in_channels, **model_config)

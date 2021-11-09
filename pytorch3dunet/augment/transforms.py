@@ -1,453 +1,296 @@
-import importlib
-
-import numpy as np
+import dataclasses
+from dataclasses import dataclass
+from pytorch3dunet.unet3d.utils import Phase
+from abc import ABC, abstractmethod
+from pytorch3dunet.datasets.featurizer import Transformable, get_feature_cls
+from typing import List, Type, Iterable, Any, Callable, Mapping, Union
 import torch
-from scipy.ndimage import rotate, map_coordinates, gaussian_filter
-from pytorch3dunet.datasets.utils import calculate_stats
-from torchvision.transforms import Compose
+import numpy as np
 from pytorch3dunet.unet3d.utils import get_logger
-from typing import Dict, Union, Optional
-from numbers import Number
-from scipy.spatial.transform import Rotation
+import inspect
+from pytorch3dunet.unet3d.utils import profile
 
-MAX_SEED = 2**32 - 1
-# WARN: use fixed random state for reproducibility; if you want to randomize on each run seed with `time.time()` e.g.
+MAX_SEED = 2 ** 32 - 1
 GLOBAL_RANDOM_STATE = np.random.RandomState(47)
 
-logger = get_logger('Transforms')
+logger = get_logger('Transformer')
 
-numpy_to_torch_dtype_dict = {
-    np.bool: torch.bool,
-    np.uint8: torch.uint8,
-    np.int8: torch.int8,
-    np.int16: torch.int16,
-    np.int32: torch.int32,
-    np.int64: torch.int64,
-    np.float16: torch.float16,
-    np.float32: torch.float32,
-    np.float64: torch.float64,
-    np.complex64: torch.complex64,
-    np.complex128: torch.complex128
-}
-torch_to_numpy_dtype_dict = {y:x for x,y in numpy_to_torch_dtype_dict.items()}
 
-class PicklableGenerator(torch.Generator):
-    def __getstate__(self):
-        return self.get_state()
-    def __setstate__(self, state):
-        return self.set_state(state)
-
-    def genSeed(self):
+class MyGenerator(torch.Generator):
+    def gen_seed(self):
         return torch.randint(generator=self, high=MAX_SEED, size=(1,)).item()
 
-class SampleStats:
-    def __init__(self, raws):
-        ndim = raws[0].ndim
-        self.min, self.max, self.mean, self.std = calculate_stats(raws)
-        logger.debug(f"mean={self.mean}, std={self.std}")
-        self.channelStats = None
-        if ndim == 4:
-            channels = raws[0].shape[0]
-            self.channelStats = [SampleStats([raw[i] for raw in raws]) for i in range(channels)]
 
-
-class RandomFlip:
-    """
-    Randomly flips the image across the given axes. Image can be either 3D (DxHxW) or 4D (CxDxHxW).
-
-    When creating make sure that the provided RandomStates are consistent between raw and labeled datasets,
-    otherwise the models won't converge.
-    """
-
-    def __init__(self, generator: PicklableGenerator, axis_prob=0.5, **kwargs):
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-        self.axes = (0, 1, 2)
-        self.axis_prob = axis_prob
-
-    def __call__(self, m):
-        assert m.ndim in [3, 4], 'Supports only 3D (DxHxW) or 4D (CxDxHxW) images'
-
-        for axis in self.axes:
-            if self.random_state.uniform() > self.axis_prob:
-                if m.ndim == 3:
-                    m = np.flip(m, axis)
-                else:
-                    channels = [np.flip(m[c], axis) for c in range(m.shape[0])]
-                    m = np.stack(channels, axis=0)
-
-        return m
-
-
-class RandomRotate90:
-    """
-    Rotate an array by 90 degrees around a randomly chosen plane. Image can be either 3D (DxHxW) or 4D (CxDxHxW).
-
-    When creating make sure that the provided RandomStates are consistent between raw and labeled datasets,
-    otherwise the models won't converge.
-
-    IMPORTANT: assumes DHW axis order (that's why rotation is performed across (1,2) axis)
-    """
-
-    def __init__(self, generator, **kwargs):
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-        # always rotate around z-axis
-        self.axis = (1, 2)
-
-    def __call__(self, m):
-        assert m.ndim in [3, 4], 'Supports only 3D (DxHxW) or 4D (CxDxHxW) images'
-
-        # pick number of rotations at random
-        k = self.random_state.randint(0, 4)
-        # rotate k times around a given plane
-        if m.ndim == 3:
-            m = np.rot90(m, k, self.axis)
-        else:
-            channels = [np.rot90(m[c], k, self.axis) for c in range(m.shape[0])]
-            m = np.stack(channels, axis=0)
-
-        return m
-
-
-class RandomRotate:
-    """
-    Rotate an array by a random degrees from taken from (-angle_spectrum, angle_spectrum) interval.
-    Rotation axis is picked at random from the list of provided axes.
-    """
-
-    def __init__(self, generator, angle_spectrum=30, axes=None, mode='reflect', order=0, **kwargs):
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-
-        if axes is None:
-            axes = [(1, 0), (2, 1), (2, 0)]
-        else:
-            assert isinstance(axes, list) and len(axes) > 0
-
-        self.angle_spectrum = angle_spectrum
-        self.axes = axes
-        self.mode = mode
-        self.order = order
-
-    def __call__(self, m):
-        axis = self.axes[self.random_state.randint(len(self.axes))]
-        angle = self.random_state.randint(-self.angle_spectrum, self.angle_spectrum)
-
-        if m.ndim == 3:
-            m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode, cval=-1)
-        else:
-            channels = [rotate(m[c], angle, axes=axis, reshape=False, order=self.order, mode=self.mode, cval=-1) for c
-                        in range(m.shape[0])]
-            m = np.stack(channels, axis=0)
-
-        return m
-
-
-class RandomRotate3D:
-    """
-    Rotate an array by a random degrees from taken from (-angle_spectrum, angle_spectrum) interval.
-    Rotation axis is picked at random from the list of provided axes.
-    """
-
-    def __init__(self, allowRotations, generator: PicklableGenerator, debug_str, mode: Union[str, Dict[int, str]],
-                 order=3, cval=0, prob=1.0, **kwargs):
-        """
-            mode: it's a dict feature number -> interpolation mode
-            prob: probability of applying the rotation.
-        """
-        self.cval = cval
-        self.allowRotations = allowRotations
-        self.debug_str = debug_str
-        self.generator = generator
-        self.prob = prob
-
-        if isinstance(mode, str):
-            self.mode = {0: mode}
-        else:
-            self.mode = mode
-
-        self.order = order
-
-    def __call__(self, m):
-
-        if not self.allowRotations:
-            return m
-
-        rand = torch.rand(size=(1,), generator=self.generator).item()
-        if rand > self.prob:
-            logger.debug(f'Not applying rotation with rand={rand}')
-            return m
-        logger.debug(f'Applying rotation with rand={rand}')
-
-        assert (m.ndim == 3 and len(self.mode) == 1) or m.shape[0] == len(self.mode)
-
-        seed = self.generator.genSeed()
-        r = Rotation.random(random_state=seed)
-        angles = r.as_euler('zxy')
-        # logger.debug(f'Random rotation matrix angles: {list(angles)} for {self.debug_str}')
-        axes = [(0, 1), (1, 2), (0, 2)]
-
-        # logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
-
-        for i,(axis,angle) in enumerate(zip(axes, angles)):
-            angle = angle / np.pi * 180
-
-            if m.ndim == 3:
-                m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode[0], cval=self.cval)
-                # logger.debug(f"m.sum(), m.std() = {m.sum()}, {m.std()}")
-            else:
-                channels = [rotate(m[c], angle, axes=axis, reshape=False, order=self.order, mode=self.mode[c], cval=self.cval) for c
-                            in range(m.shape[0])]
-                m = np.stack(channels, axis=0)
-
-        return m
-
-# it's relatively slow, i.e. ~1s per patch of size 64x200x200, so use multiple workers in the DataLoader
-# remember to use spline_order=0 when transforming the labels
-class ElasticDeformation:
-    """
-    Apply elasitc deformations of 3D patches on a per-voxel mesh. Assumes ZYX axis order (or CZYX if the data is 4D).
-    Based on: https://github.com/fcalvet/image_tools/blob/master/image_augmentation.py#L62
-    """
-
-    def __init__(self, generator, spline_order, alpha=2000, sigma=50, execution_probability=0.1, apply_3d=True,
-                 **kwargs):
-        """
-        :param spline_order: the order of spline interpolation (use 0 for labeled images)
-        :param alpha: scaling factor for deformations
-        :param sigma: smoothing factor for Gaussian filter
-        :param execution_probability: probability of executing this transform
-        :param apply_3d: if True apply deformations in each axis
-        """
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-        self.spline_order = spline_order
-        self.alpha = alpha
-        self.sigma = sigma
-        self.execution_probability = execution_probability
-        self.apply_3d = apply_3d
-
-    def __call__(self, m):
-        if self.random_state.uniform() < self.execution_probability:
-            assert m.ndim in [3, 4]
-
-            if m.ndim == 3:
-                volume_shape = m.shape
-            else:
-                volume_shape = m[0].shape
-
-            if self.apply_3d:
-                dz = gaussian_filter(self.random_state.randn(*volume_shape), self.sigma, mode="reflect") * self.alpha
-            else:
-                dz = np.zeros_like(m)
-
-            dy, dx = [
-                gaussian_filter(
-                    self.random_state.randn(*volume_shape),
-                    self.sigma, mode="reflect"
-                ) * self.alpha for _ in range(2)
-            ]
-
-            z_dim, y_dim, x_dim = volume_shape
-            z, y, x = np.meshgrid(np.arange(z_dim), np.arange(y_dim), np.arange(x_dim), indexing='ij')
-            indices = z + dz, y + dy, x + dx
-
-            if m.ndim == 3:
-                return map_coordinates(m, indices, order=self.spline_order, mode='reflect')
-            else:
-                channels = [map_coordinates(c, indices, order=self.spline_order, mode='reflect') for c in m]
-                return np.stack(channels, axis=0)
-
-        return m
-
-
-class Standardize:
-    """
-    Apply Z-score normalization to a given input tensor, i.e. re-scaling the values to be 0-mean and 1-std.
-    """
-
-    def __init__(self, stats: SampleStats, eps=1e-10, channels:Optional[Dict[str,Number]] = None,  **kwargs):
-        """ If channels is None average across all channel. Otherwise channel-wise separately to each channel in channels
-        """
-        assert stats is not None
-        self.stats = stats
-        if channels is None:
-            self.instructions = None
-        else:
-            self.instructions = {c['axis']: c for c in channels}
-        self.eps = eps
-
-    def __call__(self, m):
-
-        if self.instructions is None:
-            mean, std = self.stats.mean, self.stats.std
-        else:
-            assert m.ndim == 4
-            mean = np.zeros(m.shape[0])
-            std = np.zeros(m.shape[0])
-            for i in range(m.shape[0]):
-                if i in self.instructions.keys():
-                    if 'stats' in self.instructions[i].keys():
-                        mean[i] = float(self.instructions[i]['stats']['mean'])
-                        std[i] = float(self.instructions[i]['stats']['std'])
-                    else:
-                        mean[i] = self.stats.channelStats[i].mean
-                        std[i] = self.stats.channelStats[i].std
-                else:
-                    mean[i] = 0
-                    std[i] = 1
-
-            mean = mean[:,np.newaxis,np.newaxis,np.newaxis]
-            std = std[:, np.newaxis, np.newaxis, np.newaxis]
-
-        return (m - mean) / np.clip(std, a_min=self.eps, a_max=None)
-
-
-class PercentileNormalizer:
-    def __init__(self, pmin, pmax, channelwise=False, eps=1e-10, **kwargs):
-        self.eps = eps
-        self.pmin = pmin
-        self.pmax = pmax
-        self.channelwise = channelwise
-
-    def __call__(self, m):
-        if self.channelwise:
-            axes = list(range(m.ndim))
-            # average across channels
-            axes = tuple(axes[1:])
-            pmin = np.percentile(m, self.pmin, axis=axes, keepdims=True)
-            pmax = np.percentile(m, self.pmax, axis=axes, keepdims=True)
-        else:
-            pmin = np.percentile(m, self.pmin)
-            pmax = np.percentile(m, self.pmax)
-
-        return (m - pmin) / (pmax - pmin + self.eps)
-
-
-class Normalize:
-    """
-    Apply simple min-max scaling to a given input tensor, i.e. shrinks the range of the data in a fixed range of [-1, 1].
-    """
-
-    def __init__(self, min_value, max_value, **kwargs):
-        assert max_value > min_value
-        self.min_value = min_value
-        self.value_range = max_value - min_value
-
-    def __call__(self, m):
-        norm_0_1 = (m - self.min_value) / self.value_range
-        return np.clip(2 * norm_0_1 - 1, -1, 1)
-
-
-class AdditiveGaussianNoise:
-    def __init__(self, generator, scale=(0.0, 1.0), execution_probability=0.1, **kwargs):
-        self.execution_probability = execution_probability
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-        self.scale = scale
-
-    def __call__(self, m):
-        if self.random_state.uniform() < self.execution_probability:
-            std = self.random_state.uniform(self.scale[0], self.scale[1])
-            logger.debug(f"Adding gaussian noise with std = {std}")
-            logger.debug(f"Type before noise: {m.dtype}")
-            gaussian_noise = self.random_state.normal(0, std, size=m.shape)
-            if torch.is_tensor(m):
-                # TODO This is slow, should define it directly on the GPU
-                gaussian_noise = torch.from_numpy(gaussian_noise.astype(torch_to_numpy_dtype_dict[m.dtype]))
-            else:
-                gaussian_noise = gaussian_noise.astype(m.dtype)
-            logger.debug(f"Type of noise: {gaussian_noise.dtype}")
-            ret = m + gaussian_noise
-            logger.debug(f"Type after noise: {ret.dtype}")
-            return ret
-        return m
-
-
-class AdditivePoissonNoise:
-    def __init__(self, generator, lam=(0.0, 1.0), execution_probability=0.1, **kwargs):
-        self.execution_probability = execution_probability
-        self.random_state = np.random.RandomState(seed=generator.genSeed())
-        self.lam = lam
-
-    def __call__(self, m):
-        if self.random_state.uniform() < self.execution_probability:
-            lam = self.random_state.uniform(self.lam[0], self.lam[1])
-            poisson_noise = self.random_state.poisson(lam, size=m.shape)
-            return m + poisson_noise
-        return m
-
-
-class ToTensor:
-    """
-    Converts a given input numpy.ndarray into torch.Tensor. Adds additional 'channel' axis when the input is 3D
-    and expand_dims=True (use for raw data of the shape (D, H, W)).
-    """
-
-    def __init__(self, expand_dims, dtype=np.float32, **kwargs):
-        self.expand_dims = expand_dims
-        self.dtype = dtype
-
-    def __call__(self, m):
-        assert m.ndim in [3, 4], 'Supports only 3D (DxHxW) or 4D (CxDxHxW) images'
-        # add channel dimension
-        if self.expand_dims and m.ndim == 3:
-            m = np.expand_dims(m, axis=0)
-
-        # FIXME Can it be avoided to define on GPU first
-        return torch.from_numpy(m.astype(dtype=self.dtype))
-
-
-class Identity:
-    def __init__(self, **kwargs):
+class SkippableTransformOptions(ABC):
+    @abstractmethod
+    def serialize(self):
         pass
 
-    def __call__(self, m):
+    @staticmethod
+    @property
+    @abstractmethod
+    def skipped() -> bool:
+        pass
+
+
+@dataclass(frozen=True)
+class TransformOptions(SkippableTransformOptions, ABC):
+    skipped = False
+
+    def serialize(self):
+        return dataclasses.asdict(self)
+
+
+class SkippedTransform(SkippableTransformOptions):
+    skipped = True
+
+    def serialize(self):
+        return 'Skipped'
+
+
+class Transform(ABC):
+
+    @abstractmethod
+    def __call__(self, m: np.ndarray, featureTypes: Iterable[Type[Transformable]]) -> np.ndarray:
+        pass
+
+
+class BaseTransform(Transform, ABC):
+
+    @classmethod
+    @abstractmethod
+    def is_random(cls) -> bool:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def is_rotation(cls) -> bool:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def global_option_type(cls) -> Type[TransformOptions]:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def default_global_options(cls, phase: Phase) -> SkippableTransformOptions:
+        pass
+
+    @abstractmethod
+    def _call(self, m: np.ndarray, global_opt: TransformOptions, featureTypes: List[Type[Transformable]]) -> np.ndarray:
+        pass
+
+    @classmethod
+    def read_global_options(cls, global_options_conf: Mapping[str, Any], phase: Phase) -> SkippableTransformOptions:
+        keys = [x.lower() for x in global_options_conf.keys()]
+        assert all([x in ['train', 'test', 'val'] for x in keys])
+
+        key = repr(phase)
+        if key in global_options_conf:
+            value = global_options_conf[key]
+            if isinstance(value, str) and value.lower() == 'skipped':
+                return SkippedTransform()
+            if isinstance(value, dict):
+                return cls.global_option_type()(**value)
+            raise ValueError(value)
+        return cls.default_global_options(phase)
+
+    @classmethod
+    def validate_global_options(cls, global_options_conf: Mapping[str, Any]) -> Mapping[str, Any]:
+
+        assert all([x in ['train', 'test', 'val'] for x in global_options_conf.keys()])
+        allOptions = {}
+
+        for phase in Phase:
+            opt: SkippableTransformOptions = cls.read_global_options(global_options_conf, phase)
+            allOptions[repr(phase)] = opt.serialize()
+
+        return allOptions
+
+    @classmethod
+    def validate_options(cls, options_conf: Mapping[str, Mapping[str, Any]]):
+        return cls.validate_global_options(options_conf)
+
+    def set_seed(self, seed: int) -> None:
+        self.generator.manual_seed(seed)
+
+    def __init__(self, options_conf: Mapping[str, Any], phase: Phase, generator: MyGenerator, **kwargs):
+        self.global_options = self.read_global_options(options_conf, phase)
+        self.generator = generator
+
+    @profile
+    def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> np.ndarray:
+        assert m.ndim == 4
+        assert m.shape[0] == len(featureTypes)
+
+        if self.global_options.skipped:
+            return m
+        else:
+            assert isinstance(self.global_options, TransformOptions)
+            ret: np.ndarray = self._call(m, self.global_options, featureTypes)
+
+        assert m.shape == ret.shape
+        return ret
+
+
+def all_subclasses(cls):
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in all_subclasses(c)])
+
+
+class LocalTransform(BaseTransform, ABC):
+
+    @classmethod
+    @abstractmethod
+    def local_option_type(cls) -> Type[TransformOptions]:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def default_local_options(cls, phase: Phase, ft: Type[Transformable]) -> SkippableTransformOptions:
+        pass
+
+    @abstractmethod
+    def makeCallableSequence(self, global_opt: TransformOptions) -> Iterable[
+        Callable[[np.ndarray, TransformOptions, int], np.ndarray]]:
+        pass
+
+    def __init__(self, options_conf: Mapping[str, Mapping[str, Any]], phase: Phase, generator: MyGenerator):
+
+        assert all(x in ['local', 'global'] for x in options_conf.keys())
+        local_options_conf = options_conf.get('local', {})
+        global_options_conf = options_conf.get('global', {})
+
+        local_options = self.read_local_options(local_options_conf, phase)
+
+        def get_local_options(t: Type[Transformable]):
+            return local_options.get(t, self.default_local_options(phase, t))
+
+        self.get_local_options = get_local_options
+
+        super().__init__(global_options_conf, phase, generator)
+
+    @classmethod
+    def read_local_options(cls, local_options_conf: Mapping[str, Mapping[str, Any]], phase: Phase) \
+            -> Mapping[Type[Transformable], SkippableTransformOptions]:
+
+        keys = [x.lower() for x in local_options_conf.keys()]
+        assert all([x in ['train', 'test', 'val'] for x in keys])
+
+        ret = {}
+        key = repr(phase).lower()
+        if key in local_options_conf:
+            assert isinstance(local_options_conf[key], dict)
+            for featureName, opt in local_options_conf[key].items():
+                featureType = get_feature_cls(featureName)
+                if isinstance(opt, str) and opt.lower() == 'skipped':
+                    ret[featureType] = SkippedTransform()
+                elif isinstance(opt, dict):
+                    t = cls.local_option_type()
+                    ret[featureType] = t(**opt)
+                else:
+                    raise ValueError(opt)
+        return ret
+
+    @classmethod
+    def validate_local_options(cls, local_options_conf: Mapping[str, Mapping[str, Any]]) -> Mapping[
+        str, Mapping[str, Any]]:
+        assert all(key.lower() in ['train', 'val', 'test'] for key in local_options_conf.keys())
+
+        allOptions = {}
+        for phase in Phase:
+            allOptions[repr(phase)] = {}
+
+            local_options: Mapping[Type[Transformable], SkippableTransformOptions] = \
+                cls.read_local_options(local_options_conf, phase)
+
+            for featureType in all_subclasses(Transformable):
+                if not inspect.isabstract(featureType):
+                    featureName = featureType.__name__
+                    if featureName == 'ComposedFeatures':
+                        continue
+                    assert featureName not in allOptions[repr(phase)]
+                    allOptions[repr(phase)][featureName] = local_options.get(featureType,
+                                                                             cls.default_local_options(phase,
+                                                                                                       featureType)).serialize()
+
+        return allOptions
+
+    @classmethod
+    def validate_options(cls, options_conf: Mapping[str, Mapping[str, Any]]):
+        assert all(x in ['local', 'global'] for x in options_conf.keys())
+        local_options_conf = options_conf.get('local', {})
+        global_options_conf = options_conf.get('global', {})
+        return {
+            'local': cls.validate_local_options(local_options_conf),
+            'global': cls.validate_global_options(global_options_conf)
+        }
+
+    @profile
+    def _call(self, m: np.ndarray, global_opt: TransformOptions, featureTypes: List[Type[Transformable]]) -> np.ndarray:
+
+        for fun in self.makeCallableSequence(global_opt):
+            channels = []
+            for c, featureType in zip(range(m.shape[0]), featureTypes):
+                opt = self.get_local_options(featureType)
+                if opt.skipped:
+                    channels.append(m[c])
+                else:
+                    m3d = fun(m[c], opt, c)
+                    assert m3d.shape == m[c].shape
+                    channels.append(m3d)
+            m = np.stack(channels, axis=0)
+
         return m
 
 
-class LabelToTensor:
-    def __call__(self, m):
-        m = np.array(m)
-        return torch.from_numpy(m.astype(dtype='int64'))
+class ComposedTransform(Transform, ABC):
+    def __init__(self, transformer_classes: Iterable[Type[BaseTransform]], conf_options: Iterable[Mapping[str, Any]],
+                 common_config: Mapping[str, Any], phase: Phase, seed: int, dtype=np.float32, convert_to_torch=True):
 
+        self.dtype = dtype
+        self.convert_to_torch = convert_to_torch
+        self.transforms = []
 
-def get_transformer(config, allowRotations, stats, debug_str=None):
-    base_config = {'stats': stats, 'allowRotations': allowRotations, 'debug_str':debug_str}
-    return Transformer(config, base_config)
+        args = []
 
+        for i, (cls, options_conf) in enumerate(zip(transformer_classes, conf_options)):
+            iseed = seed + i
+            config = {**common_config,
+                      **{'generator': MyGenerator().manual_seed(iseed)}
+                      }
+            args.append((cls, options_conf, phase, iseed))
+            self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
 
-class Transformer:
-    def __init__(self, phase_config, base_config):
-        self.phase_config = phase_config
-        self.config_base = base_config
-        self.seed = torch.randint(MAX_SEED, size=(1,)).item()
-        # GLOBAL_RANDOM_STATE.randint(MAX_SEED)
+        self.state = common_config, self.dtype, self.convert_to_torch, args
 
-        logger.debug(f'Initialising new random state with seed = {self.seed}')
+    # FIXME This is probably bugged if we pickle after calling the first time
+    def __getstate__(self):
+        return self.state
 
-    def raw_transform(self):
+    def __setstate__(self, state):
+        # logger.warning(f'Pickling the {type(self).__name__} instance - This has not been properly tested')
+        self.transforms = []
+        common_config, self.dtype, self.convert_to_torch, args = state
+        for i, (cls, options_conf, phase, iseed) in enumerate(args):
+            config = {**common_config,
+                      **{'generator': MyGenerator().manual_seed(iseed)}
+                      }
+            self.transforms.append(cls(options_conf=options_conf, phase=phase, **config))
 
-        return self._create_transform('raw')
+    # FIXME Should also update the state
+    def set_seeds(self, seed: int) -> None:
+        for i, t in enumerate(self.transforms):
+            t.set_seed(seed + i)
 
-    def label_transform(self):
-        return self._create_transform('label')
-
-    def weight_transform(self):
-        return self._create_transform('weight')
-
-    @staticmethod
-    def _transformer_class(class_name):
-        m = importlib.import_module('pytorch3dunet.augment.transforms')
-        clazz = getattr(m, class_name)
-        return clazz
-
-    def _create_transform(self, name):
-        assert name in self.phase_config, f'Could not find {name} transform'
-        return Compose([
-            self._create_augmentation(c) for c in self.phase_config[name]
-        ])
-
-    def _create_augmentation(self, c):
-        config = dict(self.config_base)
-        config.update(c)
-        # FIXME Object needs to be reinitialised between epochs, all this will be always the same
-        config['generator'] = PicklableGenerator().manual_seed(self.seed)
-        aug_class = self._transformer_class(config['name'])
-        return aug_class(**config)
+    @profile
+    def __call__(self, m: np.ndarray, featureTypes: List[Type[Transformable]]) -> Union[torch.Tensor, np.ndarray]:
+        assert m.ndim == 4
+        for trans in self.transforms:
+            m = trans(m, featureTypes)
+        assert m.ndim == 4
+        if self.convert_to_torch:
+            return torch.from_numpy(m.astype(dtype=self.dtype))
+        else:
+            return m

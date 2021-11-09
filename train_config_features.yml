@@ -12,6 +12,7 @@ log_metrics:
   - name: PocketFScore
 featurizer:
   - name: PotentialGrid
+  - name: AtomLabel
 transformer:
   - name: Standardize
   - name: RandomFlip

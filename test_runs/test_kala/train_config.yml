@@ -11,15 +11,17 @@ eval_metric:
 log_metrics:
   - name: PocketFScore
 featurizer:
-  - name: PotentialGrid
+  - name: KalasantyFeatures
 transformer:
   - name: Standardize
   - name: RandomFlip
   - name: RandomRotate3D
 loaders:
+  fail_on_error: true
   dataset: StandardPDBDataset
-#  grid_config:
-#    grid_size: 65
+  force_rotations: true
+  grid_config:
+    grid_size: 65
   train:
     slice_builder:
       name: TrivialSliceBuilder
@@ -39,8 +41,7 @@ manual_seed: 0
 model:
   f_maps: 32
   final_sigmoid: true
-  layer_order: gcr
-  num_groups: 8
+  layer_order: cr
   name: UNet3D
   out_channels: 1
 optimizer:

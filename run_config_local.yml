@@ -1,5 +1,6 @@
 pdb2pqrPath: /home/lorenzo/pymol/bin/pdb2pqr
 dataFolder: /home/lorenzo/deep_apbs/srcData/pdbbind_v2019_refined
+reuse_grids: true
 test:
 - 3s0e
 - 1t7d

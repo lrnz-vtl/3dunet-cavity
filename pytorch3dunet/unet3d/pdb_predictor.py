@@ -3,9 +3,8 @@ import h5py
 import numpy as np
 import torch
 from pathlib import Path
-from pytorch3dunet.datasets.pdb import StandardPDBDataset
+from pytorch3dunet.datasets.pdb import PDBDataset
 from pytorch3dunet.unet3d.utils import get_logger
-from pytorch3dunet.unet3d.utils import remove_halo
 import prody
 
 logger = get_logger('UNetPredictor')
@@ -42,8 +41,8 @@ class PdbPredictor(_AbstractPredictorPdb):
 
     def __call__(self, test_loader):
 
-        assert isinstance(test_loader.dataset, StandardPDBDataset)
-        dataset: StandardPDBDataset = test_loader.dataset
+        assert isinstance(test_loader.dataset, PDBDataset)
+        dataset: PDBDataset = test_loader.dataset
 
         name = dataset.name
         logger.info(f"Processing '{name}'...")
@@ -133,12 +132,8 @@ class PdbPredictor(_AbstractPredictorPdb):
 
                         logger.info(f'Saving predictions for slice:{index}...')
 
-                        if patch_halo is None:
-                            logger.info(f'Skipping halo removal because of Trivial Slice Builder (TO BE IMPLEMENTED)')
-                            u_prediction, u_index = pred, index
-                        else:
-                            # remove halo in order to avoid block artifacts in the output probability maps
-                            u_prediction, u_index = remove_halo(pred, index, volume_shape, patch_halo)
+                        u_prediction, u_index = pred, index
+
                         # accumulate probabilities into the output prediction array
                         prediction_map[u_index] += u_prediction
                         # count voxel visits for normalization
@@ -159,7 +154,7 @@ class PdbPredictor(_AbstractPredictorPdb):
         normalization_masks = [np.zeros(output_shape, dtype='uint8') for _ in range(output_heads)]
         return prediction_maps, normalization_masks
 
-    def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset : StandardPDBDataset, output_pdb_path,
+    def _save_results(self, prediction_maps, normalization_masks, output_heads, dataset : PDBDataset, output_pdb_path,
                       output_h5_file=None):
         pdbData = dataset.pdbDataHandler
 
@@ -174,13 +169,6 @@ class PdbPredictor(_AbstractPredictorPdb):
         for prediction_map, normalization_mask, prediction_dataset in zip(prediction_maps, normalization_masks,
                                                                           prediction_datasets):
             prediction_map = prediction_map / normalization_mask
-
-            if dataset.mirror_padding is not None:
-                z_s, y_s, x_s = [_slice_from_pad(p) for p in dataset.mirror_padding]
-
-                logger.info(f'Dataset loaded with mirror padding: {dataset.mirror_padding}. Cropping before saving...')
-
-                prediction_map = prediction_map[:, z_s, y_s, x_s]
 
             if output_h5_file is not None:
                 output_h5_file.create_dataset(prediction_dataset, data=prediction_map, compression="gzip")

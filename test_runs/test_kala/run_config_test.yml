@@ -1,0 +1,34 @@
+dataFolder: /home/lorenzo/deep_apbs/srcData/pdbbind_v2019_refined
+pdb2pqrPath: /home/lorenzo/pymol/bin/pdb2pqr
+reuse_grids: true
+train:
+- 2yfe
+# - 4pqa
+- 3s0e
+#- 1t7d
+#- 4r75
+#- 2dw7
+#- 2fqt
+#- 1dqn
+#- 5gja
+#- 1fiv
+#- 5km9
+#- 3fjg
+#- 5tuz
+#- 5mxf
+#- 1sw2
+#- 5tcj
+#- 5g1z
+#- 4gbd
+#- 5yz2
+#- 4jwk
+#- 5vij
+test:
+- 4us3
+val:
+- 4qij
+#- 3ao4
+#- 1fch
+#- 3f3e
+#- 3u9q
+#- 2fvd

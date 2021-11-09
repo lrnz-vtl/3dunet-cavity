@@ -1,167 +1,122 @@
+from contextlib import nullcontext as nc
 import os
-
-import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import h5py
-from pytorch3dunet.datasets.utils import get_train_loaders
+from pytorch3dunet.datasets.loaders import get_train_loaders
+from pytorch3dunet.datasets.config import RunConfig
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric, get_log_metrics
 from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d.utils import profile, get_logger, \
     get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
+from pytorch3dunet.datasets.featurizer import BaseFeatureList, get_features
+from pytorch3dunet.augment.utils import Transformer
+from typing import Mapping
+import torch
+from torch.profiler import record_function
+# from torch import autocast
+from torch.cuda.amp import autocast
+from torch.cuda.amp.grad_scaler import GradScaler
 from . import utils
 
 logger = get_logger('UNet3DTrainer')
 
-
-def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, dry_run,
-                    dump_inputs, log_criterions):
+def create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders, log_criterions, run_config: RunConfig):
     assert 'trainer' in config, 'Could not find trainer configuration'
     trainer_config = config['trainer']
-
-    resume = trainer_config.get('resume', None)
-    pre_trained = trainer_config.get('pre_trained', None)
 
     # get tensorboard formatter
     tensorboard_formatter = get_tensorboard_formatter(trainer_config.pop('tensorboard_formatter', None))
     # get sample plotter
     sample_plotter = create_sample_plotter(trainer_config.pop('sample_plotter', None))
 
-    if resume is not None:
-        # continue training from a given checkpoint
-        return UNet3DTrainer.from_checkpoint(model=model,
-                                             optimizer=optimizer,
-                                             lr_scheduler=lr_scheduler,
-                                             loss_criterion=loss_criterion,
-                                             eval_criterion=eval_criterion,
-                                             log_criterions=log_criterions,
-                                             loaders=loaders,
-                                             tensorboard_formatter=tensorboard_formatter,
-                                             sample_plotter=sample_plotter,
-                                             **trainer_config)
-    elif pre_trained is not None:
-        # fine-tune a given pre-trained model
-        return UNet3DTrainer.from_pretrained(model=model,
-                                             optimizer=optimizer,
-                                             lr_scheduler=lr_scheduler,
-                                             loss_criterion=loss_criterion,
-                                             eval_criterion=eval_criterion,
-                                             log_criterions=log_criterions,
-                                             tensorboard_formatter=tensorboard_formatter,
-                                             sample_plotter=sample_plotter,
-                                             device=config['device'],
-                                             loaders=loaders,
-                                             **trainer_config)
-    else:
-        # start training from scratch
-        return UNet3DTrainer(model=model,
-                             optimizer=optimizer,
-                             lr_scheduler=lr_scheduler,
-                             loss_criterion=loss_criterion,
-                             eval_criterion=eval_criterion,
-                             log_criterions=log_criterions,
-                             device=config['device'],
-                             loaders=loaders,
-                             tensorboard_formatter=tensorboard_formatter,
-                             sample_plotter=sample_plotter,
-                             dry_run=dry_run,
-                             dump_inputs=dump_inputs,
-                             **trainer_config)
+    # start training from scratch
+    return UNet3DTrainer(model=model,
+                         optimizer=optimizer,
+                         lr_scheduler=lr_scheduler,
+                         loss_criterion=loss_criterion,
+                         eval_criterion=eval_criterion,
+                         log_criterions=log_criterions,
+                         device=config['device'],
+                         loaders=loaders,
+                         tensorboard_formatter=tensorboard_formatter,
+                         sample_plotter=sample_plotter,
+                         run_config=run_config,
+                         **trainer_config)
 
 
-class UNet3DTrainerBuilder:
-    @staticmethod
-    def build(config):
-        # Create the model
-        config['model']['in_channels'] = len(config['loaders']['featurizer'])
-        model = get_model(config['model'])
-        # use DataParallel if more than 1 GPU available
-        device = config['device']
-        if torch.cuda.device_count() > 1 and not device.type == 'cpu':
+def build_trainer(config: Mapping, run_config: RunConfig):
+    features: BaseFeatureList = get_features(config['featurizer'])
+
+    transformer = Transformer(transformer_config=config['transformer'], common_config={}, allowRotations=True)
+    transformer.validate()
+
+    model = get_model(features=features, model_config=config['model'])
+    # use DataParallel if more than 1 GPU available
+    device = config['device']
+    gpus_to_use = 0
+    if torch.cuda.device_count() >= 1 and not device.type == 'cpu':
+        if run_config.max_gpus is None:
+            gpus_to_use = torch.cuda.device_count()
+        else:
+            gpus_to_use = min(torch.cuda.device_count(), run_config.max_gpus)
+        if gpus_to_use > 1:
+            if gpus_to_use != torch.cuda.device_count():
+                raise NotImplemented
             model = nn.DataParallel(model)
-            logger.info(f'Using {torch.cuda.device_count()} GPUs for training')
+        logger.info(f'Using {gpus_to_use} GPUs for training')
 
-        # put the model on GPUs
-        logger.info(f"Sending the model to '{config['device']}'")
-        model = model.to(device)
+    # put the model on GPUs
+    logger.info(f"Sending the model to '{config['device']}'")
+    model = model.to(device)
 
-        # Log the number of learnable parameters
-        logger.info(f'Number of learnable params {get_number_of_learnable_parameters(model)}')
+    # Log the number of learnable parameters
+    logger.info(f'Number of learnable params {get_number_of_learnable_parameters(model)}')
 
-        # Create loss criterion
-        loss_criterion = get_loss_criterion(config)
-        # Create evaluation metric
-        eval_criterion = get_evaluation_metric(config)
+    # Create loss criterion
+    loss_criterion = get_loss_criterion(config)
+    # Create evaluation metric
+    eval_criterion = get_evaluation_metric(config)
 
-        # Create log metrics
-        log_criterions = get_log_metrics(config)
+    # Create log metrics
+    log_criterions = get_log_metrics(config)
 
-        # Create data loaders
-        loaders = get_train_loaders(config)
+    # Create data loaders
+    loaders = get_train_loaders(config=config, runconfig=run_config, gpus_to_use=gpus_to_use)
 
-        # Create the optimizer
-        optimizer = create_optimizer(config['optimizer'], model)
+    # Create the optimizer
+    optimizer = create_optimizer(config['optimizer'], model)
 
-        # Create learning rate adjustment strategy
-        lr_scheduler = create_lr_scheduler(config.get('lr_scheduler', None), optimizer)
+    # Create learning rate adjustment strategy
+    lr_scheduler = create_lr_scheduler(config.get('lr_scheduler', None), optimizer)
 
-        # Create model trainer
-        trainer = _create_trainer(config, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler,
-                                  loss_criterion=loss_criterion, eval_criterion=eval_criterion,
-                                  log_criterions=log_criterions,
-                                  loaders=loaders, dry_run=config['dry_run'], dump_inputs=config['dump_inputs'])
+    # Create model trainer
+    trainer = create_trainer(config, model=model, optimizer=optimizer, lr_scheduler=lr_scheduler,
+                             loss_criterion=loss_criterion, eval_criterion=eval_criterion,
+                             log_criterions=log_criterions,
+                             loaders=loaders,
+                             run_config=run_config)
 
-        return trainer
+    return trainer
 
 
 class UNet3DTrainer:
-    """3D UNet trainer.
-
-    Args:
-        model (Unet3D): UNet 3D model to be trained
-        optimizer (nn.optim.Optimizer): optimizer used for training
-        lr_scheduler (torch.optim.lr_scheduler._LRScheduler): learning rate scheduler
-            WARN: bear in mind that lr_scheduler.step() is invoked after every validation step
-            (i.e. validate_after_iters) not after every epoch. So e.g. if one uses StepLR with step_size=30
-            the learning rate will be adjusted after every 30 * validate_after_iters iterations.
-        loss_criterion (callable): loss function
-        eval_criterion (callable): used to compute training/validation metric (such as Dice, IoU, AP or Rand score)
-            saving the best checkpoint is based on the result of this function on the validation set
-        device (torch.device): device to train on
-        loaders (dict): 'train' and 'val' loaders
-        checkpoint_dir (string): dir for saving checkpoints and tensorboard logs
-        max_num_epochs (int): maximum number of epochs
-        max_num_iterations (int): maximum number of iterations
-        validate_after_iters (int): validate after that many iterations
-        log_after_iters (int): number of iterations before logging to tensorboard
-        validate_iters (int): number of validation iterations, if None validate
-            on the whole validation set
-        eval_score_higher_is_better (bool): if True higher eval scores are considered better
-        best_eval_score (float): best validation score so far (higher better)
-        num_iterations (int): useful when loading the model from the checkpoint
-        num_epoch (int): useful when loading the model from the checkpoint
-        tensorboard_formatter (callable): converts a given batch of input/output/target image to a series of images
-            that can be displayed in tensorboard
-        sample_plotter (callable): saves sample inputs, network outputs and targets to a given directory
-            during validation phase
-        skip_train_validation (bool): if True eval_criterion is not evaluated on the training set (used mostly when
-            evaluation is expensive)
-    """
 
     def __init__(self, model, optimizer, lr_scheduler, loss_criterion,
                  eval_criterion, device, loaders, checkpoint_dir,
+                 run_config: RunConfig,
                  log_criterions=None,
                  max_num_epochs=100, max_num_iterations=int(1e5),
                  validate_after_iters=100, log_after_iters=100,
                  validate_iters=None, num_iterations=1, num_epoch=0,
                  eval_score_higher_is_better=True, best_eval_score=None,
                  tensorboard_formatter=None, sample_plotter=None,
-                 skip_train_validation=False,
-                 dry_run=False, dump_inputs=False, **kwargs):
+                 skip_train_validation=False):
 
+        self.run_config = run_config
         self.model = model
         self.optimizer = optimizer
         self.scheduler = lr_scheduler
@@ -182,10 +137,8 @@ class UNet3DTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
-        self.dry_run = dry_run
-        self.dump_inputs = dump_inputs
 
-        self.valLoaders = self.loaders['val'](seed=0)
+        self.valLoaders = self.loaders['val']()
 
         logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
@@ -209,70 +162,21 @@ class UNet3DTrainer:
         self.num_epoch = num_epoch
         self.skip_train_validation = skip_train_validation
 
-    @classmethod
-    def from_checkpoint(cls, resume, model, optimizer, lr_scheduler, loss_criterion, eval_criterion, loaders,
-                        tensorboard_formatter=None, sample_plotter=None, **kwargs):
-        logger.info(f"Loading checkpoint '{resume}'...")
-        state = utils.load_checkpoint(resume, model, optimizer)
-        logger.info(
-            f"Checkpoint loaded. Epoch: {state['epoch']}. Best val score: {state['best_eval_score']}. Num_iterations: {state['num_iterations']}")
-        checkpoint_dir = os.path.split(resume)[0]
-        return cls(model, optimizer, lr_scheduler,
-                   loss_criterion, eval_criterion,
-                   torch.device(state['device']),
-                   loaders, checkpoint_dir,
-                   eval_score_higher_is_better=state['eval_score_higher_is_better'],
-                   best_eval_score=state['best_eval_score'],
-                   num_iterations=state['num_iterations'],
-                   num_epoch=state['epoch'],
-                   max_num_epochs=state['max_num_epochs'],
-                   max_num_iterations=state['max_num_iterations'],
-                   validate_after_iters=state['validate_after_iters'],
-                   log_after_iters=state['log_after_iters'],
-                   validate_iters=state['validate_iters'],
-                   skip_train_validation=state.get('skip_train_validation', False),
-                   tensorboard_formatter=tensorboard_formatter,
-                   sample_plotter=sample_plotter)
-
-    @classmethod
-    def from_pretrained(cls, pre_trained, model, optimizer, lr_scheduler, loss_criterion, eval_criterion,
-                        device, loaders,
-                        max_num_epochs=100, max_num_iterations=int(1e5),
-                        validate_after_iters=100, log_after_iters=100,
-                        validate_iters=None, num_iterations=1, num_epoch=0,
-                        eval_score_higher_is_better=True, best_eval_score=None,
-                        tensorboard_formatter=None, sample_plotter=None,
-                        skip_train_validation=False, **kwargs):
-        logger.info(f"Logging pre-trained model from '{pre_trained}'...")
-        utils.load_checkpoint(pre_trained, model, None)
-        if 'checkpoint_dir' not in kwargs:
-            checkpoint_dir = os.path.split(pre_trained)[0]
+        if run_config.mixed:
+            self.scaler = GradScaler()
         else:
-            checkpoint_dir = kwargs.pop('checkpoint_dir')
-        return cls(model, optimizer, lr_scheduler,
-                   loss_criterion, eval_criterion,
-                   device, loaders, checkpoint_dir,
-                   eval_score_higher_is_better=eval_score_higher_is_better,
-                   best_eval_score=best_eval_score,
-                   num_iterations=num_iterations,
-                   num_epoch=num_epoch,
-                   max_num_epochs=max_num_epochs,
-                   max_num_iterations=max_num_iterations,
-                   validate_after_iters=validate_after_iters,
-                   log_after_iters=log_after_iters,
-                   validate_iters=validate_iters,
-                   tensorboard_formatter=tensorboard_formatter,
-                   sample_plotter=sample_plotter,
-                   skip_train_validation=skip_train_validation)
+            self.scaler = None
 
     @profile
     def fit(self):
-        for i in range(self.num_epoch, self.max_num_epochs):
-            logger.info(f'Entering training epoch {i}')
-            trainLoaders = self.loaders['train'](seed=i)
 
-            # train for one epoch
-            should_terminate = self.train(trainLoaders)
+        for i in range(self.num_epoch, self.max_num_epochs):
+
+            logger.info(f'Entering training epoch {i}')
+            trainLoaders = self.loaders['train']()
+
+            with record_function("3dunet-train") if self.run_config.profile else nc():
+                should_terminate = self.train(trainLoaders)
 
             if should_terminate:
                 logger.info('Stopping criterion is satisfied. Finishing training')
@@ -283,91 +187,62 @@ class UNet3DTrainer:
 
     @profile
     def train(self, trainLoaders):
-        """Trains the model for 1 epoch.
-
-        Returns:
-            True if the training should be terminated immediately, False otherwise
-        """
-        train_losses = utils.RunningAverage()
-        train_eval_scores = utils.RunningAverage()
+        train_losses = utils.GpuRunningAverage()
+        train_eval_scores = utils.GpuRunningAverage()
 
         # sets the model in training mode
         self.model.train()
 
         for t in trainLoaders:
+            self.optimizer.zero_grad()
+
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
-            logger.debug(f'Input.shape: {input.shape}. target.shape: {target.shape}')
-            # logger.debug(f'Forward passing samples {names}. input.dtype: {input.dtype}, target.dtype: {target.dtype}')
-            #
-            # if input.dtype != torch.float32:
-            #     raise ValueError("Not a float32")
+            with record_function("3dunet-split_training_batch") if self.run_config.profile else nc():
+                names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
+            logger.debug(f'Forward samples {names}')
 
-            if self.dump_inputs:
-                dump_dir = f'{self.checkpoint_dir}/dumps'
-                os.makedirs(dump_dir, exist_ok=True)
-                for name, inp, targ in zip(names,input,target):
-                    targ = targ[0]
-                    h5path = f'{dump_dir}/{name}.h5'
-                    with h5py.File(h5path, 'w') as h5:
-                        h5.create_dataset('labels', data=targ)
-                        for i, arr in enumerate(inp):
-                            h5.create_dataset(f'raws_{i}', data=arr)
+            if self.run_config.dump_inputs:
+                self.save_inputs(names, input, target)
 
-
-            if self.dry_run:
+            if self.run_config.dry_run:
                 continue
-            output, loss = self._forward_pass(input, target, weight)
 
-            train_losses.update(loss.item(), self._batch_size(input))
+            with autocast(enabled=self.run_config.mixed):
+                with record_function("3dunet-forward_pass") if self.run_config.profile else nc():
+                    output = self.model(input)
+                    if self.run_config.mixed:
+                        assert output.dtype is torch.float16
+                        logger.debug("Autocast = true")
+                    else:
+                        assert output.dtype is torch.float32
+                        logger.debug("Autocast = false")
+                    loss = self.loss_criterion(output, target)
+                    assert loss.dtype is torch.float32
+
+            # TODO This might be slow
+            with record_function("3dunet-loss_item") if self.run_config.profile else nc():
+                train_losses.update(loss, self._batch_size(input))
 
             # compute gradients and update parameters
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            with record_function("3dunet-optimize") if self.run_config.profile else nc():
+
+                if self.scaler is not None:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
 
             if self.num_iterations % self.validate_after_iters == 0:
-                # set the model in eval mode
-                self.model.eval()
-                # evaluate on validation set
-                eval_score = self.validate()
-                # set the model back to training mode
-                self.model.train()
-
-                # adjust learning rate if necessary
-                if isinstance(self.scheduler, ReduceLROnPlateau):
-                    self.scheduler.step(eval_score)
-                elif self.scheduler is None:
-                    pass
-                else:
-                    self.scheduler.step()
-                # log current learning rate in tensorboard
-                self._log_lr()
-                # remember best validation metric
-                is_best = self._is_best_eval_score(eval_score)
-
-                # save checkpoint
-                self._save_checkpoint(is_best)
+                with record_function("3dunet-validate") if self.run_config.profile else nc():
+                    self.validate_step()
 
             if self.num_iterations % self.log_after_iters == 0:
-                # if model contains final_activation layer for normalizing logits apply it, otherwise both
-                # the evaluation metric as well as images in tensorboard will be incorrectly computed
-                if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    output = self.model.final_activation(output)
-
-                # compute eval criterion
-                if not self.skip_train_validation:
-                    eval_score = self.eval_criterion(output, target)
-                    train_eval_scores.update(eval_score.item(), self._batch_size(input))
-
-                # log stats, params and images
-                logger.info(
-                    f'Training stats. Loss: {train_losses.avg}. Evaluation score: {train_eval_scores.avg}')
-                self._log_stats('train', train_losses.avg, train_eval_scores.avg, {})
-                self._log_params()
-                self._log_images(input, target, output, 'train_')
+                with record_function("3dunet-validate") if self.run_config.profile else nc():
+                    self.log_step(input, output, target, train_eval_scores, train_losses)
 
             if self.should_stop():
                 return True
@@ -396,9 +271,9 @@ class UNet3DTrainer:
     def validate(self):
         logger.info('Validating...')
 
-        val_losses = utils.RunningAverage()
-        val_scores = utils.RunningAverage()
-        log_scores = {type(log_criterion).__name__: utils.RunningAverage() for log_criterion in self.log_criterions}
+        val_losses = utils.GpuRunningAverage()
+        val_scores = utils.GpuRunningAverage()
+        log_scores = {type(log_criterion).__name__: utils.GpuRunningAverage() for log_criterion in self.log_criterions}
 
         if self.sample_plotter is not None:
             self.sample_plotter.update_current_dir()
@@ -410,11 +285,21 @@ class UNet3DTrainer:
 
                 names, pdbObjs, (input, target, weight) = self._split_training_batch(t)
 
-                if self.dry_run:
+                if self.run_config.dry_run:
                     continue
 
-                output, loss = self._forward_pass(input, target, weight)
-                val_losses.update(loss.item(), self._batch_size(input))
+                with autocast(enabled=self.run_config.mixed):
+                    output = self.model(input)
+                    if self.run_config.mixed:
+                        assert output.dtype is torch.float16
+                        logger.debug("Autocast = true")
+                    else:
+                        assert output.dtype is torch.float32
+                        logger.debug("Autocast = false")
+                    loss = self.loss_criterion(output, target)
+                    assert loss.dtype is torch.float32
+
+                val_losses.update(loss, self._batch_size(input))
 
                 # if model contains final_activation layer for normalizing logits apply it, otherwise
                 # the evaluation metric will be incorrectly computed
@@ -425,12 +310,12 @@ class UNet3DTrainer:
                     self._log_images(input, target, output, 'val_')
 
                 eval_score = self.eval_criterion(output, target, pdbObjs)
-                val_scores.update(eval_score.item(), self._batch_size(input))
+                val_scores.update(eval_score, self._batch_size(input))
 
                 for log_criterion in self.log_criterions:
                     name = type(log_criterion).__name__
                     log_score = log_criterion(output, target, pdbObjs)
-                    log_scores[name].update(log_score.item(), self._batch_size(input))
+                    log_scores[name].update(log_score, self._batch_size(input))
 
                 if self.sample_plotter is not None:
                     self.sample_plotter(i, input, output, target, 'val')
@@ -439,10 +324,60 @@ class UNet3DTrainer:
                     # stop validation
                     break
 
-            self._log_stats('val', val_losses.avg, val_scores.avg,
-                            {name: log_score.avg for name,log_score in log_scores.items()})
-            logger.info(f'Validation finished. Loss: {val_losses.avg}. Evaluation score: {val_scores.avg}')
-            return val_scores.avg
+            self._log_stats('val', val_losses.value(), val_scores.value(),
+                            {name: log_score.value() for name, log_score in log_scores.items()})
+            logger.info(f'Validation finished. Loss: {val_losses.value()}. Evaluation score: {val_scores.value()}')
+            return val_scores.value()
+
+    def save_inputs(self, names, input, target):
+        dump_dir = f'{self.checkpoint_dir}/dumps'
+        os.makedirs(dump_dir, exist_ok=True)
+        for name, inp, targ in zip(names, input, target):
+            targ = targ[0]
+            h5path = f'{dump_dir}/{name}.h5'
+            with h5py.File(h5path, 'w') as h5:
+                h5.create_dataset('labels', data=targ)
+                for i, arr in enumerate(inp):
+                    h5.create_dataset(f'raws_{i}', data=arr)
+
+    def validate_step(self):
+        # set the model in eval mode
+        self.model.eval()
+        # evaluate on validation set
+        eval_score = self.validate()
+        # set the model back to training mode
+        self.model.train()
+
+        # adjust learning rate if necessary
+        if isinstance(self.scheduler, ReduceLROnPlateau):
+            self.scheduler.step(eval_score)
+        else:
+            self.scheduler.step()
+        # log current learning rate in tensorboard
+        self._log_lr()
+        # remember best validation metric
+        is_best = self._is_best_eval_score(eval_score)
+
+        # save checkpoint
+        self._save_checkpoint(is_best)
+
+    def log_step(self, input, output, target, train_eval_scores, train_losses):
+        # if model contains final_activation layer for normalizing logits apply it, otherwise both
+        # the evaluation metric as well as images in tensorboard will be incorrectly computed
+        if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
+            output = self.model.final_activation(output)
+
+        # compute eval criterion
+        if not self.skip_train_validation:
+            eval_score = self.eval_criterion(output, target)
+            train_eval_scores.update(eval_score, self._batch_size(input))
+
+        # log stats, params and images
+        logger.info(
+            f'Training stats. Loss: {train_losses.value()}. Evaluation score: {train_eval_scores.value()}')
+        self._log_stats('train', train_losses.value(), train_eval_scores.value(), {})
+        self._log_params()
+        self._log_images(input, target, output, 'train_')
 
     @profile
     def _split_training_batch(self, t):
@@ -461,19 +396,6 @@ class UNet3DTrainer:
         else:
             input, target, weight = t
         return names, pdbObjs, (input, target, weight)
-
-    def _forward_pass(self, input, target, weight=None):
-        # forward pass
-        output = self.model(input)
-
-        # compute the loss
-        # assert ((output <= 1.0) & (output >= 0.0)).all()
-        if weight is None:
-            loss = self.loss_criterion(output, target)
-        else:
-            loss = self.loss_criterion(output, target, weight)
-
-        return output, loss
 
     def _is_best_eval_score(self, eval_score):
         if self.eval_score_higher_is_better:
@@ -521,7 +443,7 @@ class UNet3DTrainer:
             f'{phase}_loss_avg': loss_avg,
             f'{phase}_eval_score_avg': eval_score_avg
         }
-        tag_value.update({f'{phase}_{name}_avg':log_score_avg for name,log_score_avg in log_scores_avg.items()})
+        tag_value.update({f'{phase}_{name}_avg': log_score_avg for name, log_score_avg in log_scores_avg.items()})
 
         for tag, value in tag_value.items():
             self.writer.add_scalar(tag, value, self.num_iterations)

@@ -85,4 +85,3 @@ if __name__=='__main__':
     mean = sums/n
     std = np.sqrt((sqsums - mean**2))/n
     print(mean, std)
-    # dataLoader = DataLoader(ConcatDataset(datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
