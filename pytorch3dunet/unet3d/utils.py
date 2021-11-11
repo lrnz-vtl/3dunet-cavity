@@ -10,13 +10,14 @@ import torch
 from torch import optim
 from enum import Enum
 
-
 import builtins
+
 try:
     profile = builtins.profile
 except AttributeError:
     # No line profiler, provide a pass-through version
-    def profile(func): return func
+    def profile(func):
+        return func
 
 
 class Phase(Enum):
@@ -25,25 +26,26 @@ class Phase(Enum):
     TEST = 3
 
     @classmethod
-    def from_str(cls, x:str):
+    def from_str(cls, x: str):
         y = x.lower()
-        if y=='train':
+        if y == 'train':
             return cls.TRAIN
-        if y=='test':
+        if y == 'test':
             return cls.TEST
-        if y=='val':
+        if y == 'val':
             return cls.VAL
         raise ValueError(x)
 
     def __repr__(self):
-        if self==self.TRAIN:
+        if self == self.TRAIN:
             return 'train'
-        if self==self.TEST:
+        if self == self.TEST:
             return 'test'
-        if self==self.VAL:
+        if self == self.VAL:
             return 'val'
 
         raise RuntimeError
+
 
 def get_attr(name, module_names):
     for module in module_names:
@@ -52,6 +54,7 @@ def get_attr(name, module_names):
             ft_class = getattr(m, name)
             return ft_class
     raise AttributeError(f"None of the modules in {module_names} have attribute {name}")
+
 
 def save_checkpoint(state, is_best, checkpoint_dir, logger=None):
     """Saves model and training parameters at '{checkpoint_dir}/last_checkpoint.pytorch'.
@@ -120,18 +123,21 @@ loggers = {}
 default_level = logging.INFO
 filename = None
 
+
 def set_default_log_level(level):
     global default_level
     default_level = level
 
-    for name,logger in loggers.items():
+    for name, logger in loggers.items():
         logger.setLevel(level)
+
 
 def set_filename(fname):
     global filename
     filename = fname
     if os.path.exists(filename):
         os.remove(filename)
+
 
 def get_logger(name, level=None):
     global loggers
@@ -418,6 +424,7 @@ def create_sample_plotter(sample_plotter_config):
     m = importlib.import_module('pytorch3dunet.unet3d.utils')
     clazz = getattr(m, class_name)
     return clazz(**sample_plotter_config)
+
 
 def str2bool(v):
     if isinstance(v, bool):

@@ -130,7 +130,8 @@ class BaseTransform(Transform, ABC):
             assert isinstance(self.global_options, TransformOptions)
             ret: np.ndarray = self._call(m, self.global_options, featureTypes)
 
-        assert m.shape == ret.shape
+        # This is not true for downscaling
+        # assert m.shape == ret.shape
         return ret
 
 
@@ -238,7 +239,8 @@ class LocalTransform(BaseTransform, ABC):
                     channels.append(m[c])
                 else:
                     m3d = fun(m[c], opt, c)
-                    assert m3d.shape == m[c].shape
+                    # This is not true for downscaling
+                    # assert m3d.shape == m[c].shape
                     channels.append(m3d)
             m = np.stack(channels, axis=0)
 

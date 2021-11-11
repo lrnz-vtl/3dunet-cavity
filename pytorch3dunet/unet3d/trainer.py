@@ -206,6 +206,8 @@ class UNet3DTrainer:
             if self.run_config.dump_inputs:
                 self.save_inputs(names, input, target)
 
+            logger.debug(f'input shape: {input.shape}')
+
             if self.run_config.dry_run:
                 continue
 

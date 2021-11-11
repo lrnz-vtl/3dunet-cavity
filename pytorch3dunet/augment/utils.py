@@ -12,7 +12,8 @@ def _transformer_class(class_name) -> Type[BaseTransform]:
         'pytorch3dunet.augment.randomRotate',
         'pytorch3dunet.augment.globalTransforms',
         'pytorch3dunet.augment.trivialRandom',
-        'pytorch3dunet.augment.denoise'
+        'pytorch3dunet.augment.denoise',
+        'pytorch3dunet.augment.downscale'
     ]
     modules = [importlib.import_module(m) for m in modules]
     for m in modules:
