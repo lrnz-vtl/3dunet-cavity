@@ -28,6 +28,8 @@ def load_config(runconfigPath, nworkers: int, pdb_workers: int, max_gpus: int, d
     os.makedirs(class_config.loaders_config.tmp_folder, exist_ok=True)
 
     config['trainer']['checkpoint_dir'] = str(runFolder / checkpointname)
+    config['predictor'] = config.get('predictor', {})
+    config['predictor']['output_dir'] = str(runFolder / "predictions")
 
     if device_str is not None:
         logger.info(f"Device specified in config: '{device_str}'")

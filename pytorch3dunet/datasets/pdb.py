@@ -106,7 +106,7 @@ class PDBDataset(AbstractDataset):
 
     def __getitem__(self, idx):
         logger.debug(f'Getting idx {idx} from {self.name}')
-        return self.name, self.pdbDataHandler, super(PDBDataset, self).__getitem__(idx)
+        return self.name, self.pdbDataHandler, super().__getitem__(idx)
 
     @classmethod
     def collate_fn(cls, xs):
@@ -115,10 +115,11 @@ class PDBDataset(AbstractDataset):
     @classmethod
     def prediction_collate(cls, batch):
         names = [name for name, _, _ in batch]
+        name = names[0]
         pdbObjs = [x for _, x, _ in batch]
         assert all(y == names[0] for y in names)
         samples = [data for _, _, data in batch]
-        return default_prediction_collate(samples)
+        return name, pdbObjs, default_prediction_collate(samples)
 
     @classmethod
     def create_datasets(cls, loaders_config: LoadersConfig, pdb_workers: int,
